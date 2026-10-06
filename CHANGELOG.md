@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.2] - 2026-10-05
+
+### Changed:
+
+- **Documentation & Consistency**: Updated README.MD to document the MIT License and maintain full consistency with the changelog.
+
 ## [2.2.1] - 2026-10-05
 
 ### Added:
