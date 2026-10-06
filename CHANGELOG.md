@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.1] - 2026-10-05
+
+### Added:
+
+- **MIT License**: Added official MIT License file and updated package configuration.
+
 ## [2.2.0] - 2026-08-08
 
 ### Added:

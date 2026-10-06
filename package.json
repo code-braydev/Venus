@@ -1,6 +1,6 @@
 {
   "name": "@braydev/venus",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "A lightweight, type-safe networking library focused on clean and predictable API calls.",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -14,8 +14,10 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE"
   ],
+  "license": "MIT",
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts --clean --minify",
     "dev": "tsup src/index.ts --watch --format cjs,esm",
