@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.0] - 2026-10-07
+
+### Added:
+
+- **Declarative Singleton config**: `venus.config({ baseURL, headers, timeout, retry })` merges only the provided keys, `venus.config()` (no args) reads back the active configuration and `venus.reset()` clears everything. Global `timeout` and `retry` now apply to every standalone request and can be overridden per request.
+- **Multi-instance mode**: `createInstance({ baseURL, headers, timeout, retry })` returns an independent client with `get`, `send`, `update`, `updateOnly`, `remove` and its own `config()`. Instances never read the global singleton config (precedence: per-request > instance > nothing).
+- **Hybrid engine (`fetch` + `XMLHttpRequest`)**: `fetch` remains the default transport; providing a `progress` callback switches the request to XHR transparently — no flags required. Both engines normalize into the same `{ data, ok, status, error, errorCode }` contract, sharing timeouts, `AbortSignal`, hooks, telemetry and retries.
+- **Unified progress callback**: `progress: ({ direction, loaded, percent }) => {}` reports the transfer automatically: requests that send a body report `direction: "upload"`, the rest report `direction: "download"`. `loaded` is a ready-to-print string (e.g. `"125.0KB / 523.0KB"`).
+- Official bilingüe lema: *HTTP, without friction. / HTTP, sin fricción.*
+
+### Removed (Breaking):
+
+- **`getRss` and all RSS/Atom support**: Venus is now a specialized HTTP/HTTPS client with **zero dependencies** — `fast-xml-parser` was removed entirely (dependencies and dev dependencies) and no feed/parser code ships with the package.
+- **RSS types**: `VenusRssFeed`, `VenusRssItem`, `VenusRssMediaContent`, `VenusRssMode` and `VenusRssOptions` were removed from the public API.
+- **`venusConfig` legacy manager**: the granular API (`setBaseURL`, `setGlobalHeaders`, `getBaseURL`, `getGlobalHeaders`, `getTimeout`, `getRetry`, `reset`) was removed in favor of the single `venus` facade (`venus.config()` / `venus.reset()`).
+- **`useXHR`, `onUploadProgress` and `onDownloadProgress`**: replaced by the single `progress` callback; engine selection and transfer direction are fully automatic.
+- **`PARSING_ERROR`**: renamed to `JSON_PARSE_ERROR` so the code clearly reports an invalid JSON body returned by the server (message: *"The server returned an invalid JSON body"*).
+
+### Changed:
+
+- **Scope-aware request engine**: header/timeout/retry/baseURL resolution was centralized in a config scope layer that serves both singleton and instance modes.
+- **Leaner hot path**: abort plumbing (`AbortController`, listeners) and `Headers` merging are now only allocated when a request actually uses timeouts, signals, headers or bodies — fewer allocations per call without changing behavior.
+- **Package**: version bumped to `3.0.0`, description updated to the official lema.
+
+### Migration Notes:
+
+- Remove `getRss` imports: RSS/Atom support no longer exists in Venus; use a dedicated feed library.
+- Replace the legacy config API: `venusConfig.setBaseURL(url)` → `venus.config({ baseURL: url })`, `setGlobalHeaders(h)` → `venus.config({ headers: h })`, `getGlobalHeaders()` → `venus.config().headers`, `reset()` → `venus.reset()`.
+- Replace progress options: `onUploadProgress`/`onDownloadProgress`/`useXHR` → `progress: ({ direction, loaded, percent }) => {}` and handle both directions in the same callback.
+- `PARSING_ERROR` → `JSON_PARSE_ERROR` if you match on error codes.
+
 ## [2.2.2] - 2026-10-05
 
 ### Changed:

@@ -23,7 +23,7 @@ export type VenusErrorCode =
   | "TIMEOUT"
   | "ABORTED"
   | "NETWORK_ERROR"
-  | "PARSING_ERROR"
+  | "JSON_PARSE_ERROR"
   | "INVALID_BODY"
   | "RETRY_EXHAUSTED"
   | "UNKNOWN_ERROR";
@@ -79,6 +79,21 @@ export interface VenusRetryOptions {
 }
 
 /**
+ * Declarative configuration accepted by `venus.config()` and `createInstance()`.
+ * Only the provided keys are applied; the rest keep their previous value.
+ */
+export interface VenusConfigInput {
+  /** Optional base URL to avoid repeating full paths in every call. */
+  baseURL?: string;
+  /** Headers merged into every request of this scope (per-request headers win). */
+  headers?: Record<string, string>;
+  /** Default request timeout in milliseconds. */
+  timeout?: number;
+  /** Default retry policy; can be overridden per request. */
+  retry?: boolean | number | VenusRetryOptions;
+}
+
+/**
  * Telemetry event emitted once each request resolves.
  */
 export interface VenusTelemetryEvent {
@@ -110,6 +125,31 @@ export interface VenusHooks {
 }
 
 /**
+ * Transfer progress snapshot reported by the hybrid engine.
+ */
+export interface VenusProgress {
+  /**
+   * Transfer direction: `"upload"` when a body is being sent,
+   * `"download"` when a response body is being received.
+   */
+  direction: "upload" | "download";
+  /**
+   * Human-readable transfer amount, e.g. `"125KB / 523KB"`.
+   * Shows only the transferred bytes when the total is not computable.
+   */
+  loaded: string;
+  /** Completion percentage (0-100), or null when total is unknown. */
+  percent: number | null;
+}
+
+/**
+ * Callback invoked as progress events arrive.
+ * Providing it switches the request to the XHR engine transparently;
+ * the direction is detected automatically (body -> upload, no body -> download).
+ */
+export type VenusProgressCallback = (progress: VenusProgress) => void;
+
+/**
  * Internal configuration for network requests.
  * Extends RequestInit for compatibility with fetch.
  */
@@ -130,6 +170,60 @@ export interface VenusOptions extends RequestInit {
   hooks?: VenusHooks;
   /** Optional telemetry callback. */
   onTelemetry?: (event: VenusTelemetryEvent) => void;
+  /**
+   * Unified progress callback for the request.
+   *
+   * Providing it transparently switches the transport to XMLHttpRequest
+   * (no flags required). The direction is detected automatically:
+   * requests with a body report `direction: "upload"`, the rest report
+   * `direction: "download"`.
+   *
+   * ```ts
+   * await send("/upload", file, {
+   *   progress: ({ direction, loaded, percent }) => {
+   *     console.log(`${direction}: ${loaded} ${percent}%`);
+   *   },
+   * });
+   * ```
+   */
+  progress?: VenusProgressCallback;
+  /**
+   * @internal
+   * Instance-level defaults injected by `createInstance()`.
+   * When present, the global singleton config is ignored.
+   */
+  defaults?: VenusConfigInput;
+}
+
+/**
+ * Independent Venus client created by `createInstance()`.
+ * Each instance keeps its own defaults and never reads the global singleton config.
+ */
+export interface VenusInstance {
+  /** Performs a GET request with the instance defaults applied. */
+  get<T>(path: string, options?: VenusOptions): Promise<VenusResponse<T>>;
+  /** Performs a POST request with the instance defaults applied. */
+  send<T>(
+    path: string,
+    body: unknown,
+    options?: VenusOptions,
+  ): Promise<VenusResponse<T>>;
+  /** Performs a PUT request with the instance defaults applied. */
+  update<T>(
+    path: string,
+    body: unknown,
+    options?: VenusOptions,
+  ): Promise<VenusResponse<T>>;
+  /** Performs a PATCH request with the instance defaults applied. */
+  updateOnly<T>(
+    path: string,
+    body: unknown,
+    options?: VenusOptions,
+  ): Promise<VenusResponse<T>>;
+  /** Performs a DELETE request with the instance defaults applied. */
+  remove<T>(path: string, options?: VenusOptions): Promise<VenusResponse<T>>;
+  /** Merges new values into the instance defaults. */
+  config(options: VenusConfigInput): void;
 }
 
 /**
@@ -144,69 +238,3 @@ export type VenusNormalizedError = Pick<
   VenusResponse<never>,
   "ok" | "status" | "error" | "errorCode"
 >;
-
-/**
- * Media content entry (Media RSS `media:content` or Atom enclosures).
- */
-export interface VenusRssMediaContent {
-  url: string;
-  type?: string;
-  medium?: string;
-}
-
-/**
- * Parsed RSS/Atom item returned by Venus RSS helpers.
- */
-export interface VenusRssItem {
-  title: string;
-  link?: string;
-  description?: string;
-  content?: string;
-  pubDate?: string;
-  guid?: string;
-  author?: string;
-  categories?: string[];
-  /** RSS `<enclosure>` or Atom `<link rel="enclosure">` attachment. */
-  enclosure?: {
-    url: string;
-    type?: string;
-    length?: number;
-  };
-  /** Media RSS attachments (`media:content` and `media:thumbnail`). */
-  media?: {
-    content?: VenusRssMediaContent[];
-    thumbnail?: { url: string }[];
-  };
-  /** Best-guess image URL for the item (enclosure → media → first <img> in HTML). */
-  image?: string;
-}
-
-/**
- * Parsed RSS/Atom feed returned by Venus RSS helpers.
- */
-export interface VenusRssFeed {
-  sourceType: "rss" | "atom";
-  title: string;
-  description?: string;
-  link?: string;
-  language?: string;
-  updatedAt?: string;
-  image?: string;
-  items: VenusRssItem[];
-}
-
-/**
- * Parsing strictness for RSS/Atom feeds.
- */
-export type VenusRssMode = "strict" | "lenient";
-
-/**
- * Options accepted by the RSS helper.
- */
-export interface VenusRssOptions extends VenusOptions {
-  /**
-   * strict: fail when the XML is not valid RSS/Atom
-   * lenient: best-effort normalization for non-standard feeds
-   */
-  rssMode?: VenusRssMode;
-}

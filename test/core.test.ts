@@ -1,10 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { get, venusConfig } from "../src/index";
+import { get, venus } from "../src/index";
 
 describe("Venus Core & Configuration", () => {
   beforeEach(() => {
-    venusConfig.setBaseURL("");
-    venusConfig.setGlobalHeaders({});
+    venus.reset();
   });
 
   afterEach(() => {
@@ -12,14 +11,17 @@ describe("Venus Core & Configuration", () => {
   });
 
   it("should normalize base URL and set global headers", async () => {
-    venusConfig.setBaseURL("https://api.example.com/");
-    venusConfig.setGlobalHeaders({
-      "X-Custom-Global": "global-val",
-      Authorization: "Bearer token-123",
+    venus.config({
+      baseURL: "https://api.example.com/",
+      headers: {
+        "X-Custom-Global": "global-val",
+        Authorization: "Bearer token-123",
+      },
     });
 
-    expect(venusConfig.getBaseURL()).toBe("https://api.example.com");
-    expect(venusConfig.getGlobalHeaders()).toEqual({
+    const current = venus.config();
+    expect(current.baseURL).toBe("https://api.example.com");
+    expect(current.headers).toEqual({
       "X-Custom-Global": "global-val",
       Authorization: "Bearer token-123",
     });
@@ -44,6 +46,21 @@ describe("Venus Core & Configuration", () => {
     expect(headers.get("x-custom-global")).toBe("global-val");
     expect(headers.get("x-custom-override")).toBe("override-val");
     expect(headers.get("authorization")).toBe("Bearer token-override");
+  });
+
+  it("should skip headers and abort plumbing when nothing is configured", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await get("https://api.example.com/plain");
+
+    const init = fetchSpy.mock.calls[0][1] as RequestInit;
+    expect(init.headers).toBeUndefined();
+    expect(init.signal).toBeUndefined();
   });
 
   it("should serialize query params correctly with various array formats and nested objects", async () => {

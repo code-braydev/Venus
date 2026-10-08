@@ -1,35 +1,79 @@
-let globalBaseURL = "";
-let globalHeaders: Record<string, string> = {};
+import type { VenusConfigInput, VenusRetryOptions } from "../core/types.js";
 
 /**
- * Venus Configuration Manager
- * Handles global settings like Base URL for all network requests.
+ * Mutable global configuration store (Singleton scope).
+ * Internal: only the request engine and the `venus` facade read/write it.
  */
-export const venusConfig = {
-  /**
-   * Sets the global base URL (e.g., https://api.braydev.xyz).
-   * It automatically handles trailing slashes for consistency.
-   */
-  setBaseURL: (url: string) => {
-    // Optimization: Ensures the URL is clean to avoid redundant slashes
-    globalBaseURL = url.endsWith("/") ? url.slice(0, -1) : url;
-  },
-
-  /**
-   * Returns the current global base URL.
-   * Internal use only.
-   */
-  getBaseURL: () => globalBaseURL,
-  /**
-   * Set global headers to be applied to every request.
-   * Accepts a plain object of header entries.
-   */
-  setGlobalHeaders: (headers: Record<string, string>) => {
-    globalHeaders = { ...(headers || {}) };
-  },
-
-  /**
-   * Returns the current global headers as a plain object.
-   */
-  getGlobalHeaders: (): Record<string, string> => ({ ...globalHeaders }),
+const state: {
+  baseURL: string;
+  headers: Record<string, string>;
+  timeout?: number;
+  retry?: boolean | number | VenusRetryOptions;
+} = {
+  baseURL: "",
+  headers: {},
 };
+
+/**
+ * @internal
+ * Returns the live global configuration used by the request engine.
+ * Never mutated in place (replace semantics), so callers always see a
+ * consistent snapshot for the lifetime of a request.
+ */
+export function readConfig(): typeof state {
+  return state;
+}
+
+function normalizeBaseURL(url: string): string {
+  return url.endsWith("/") ? url.slice(0, -1) : url;
+}
+
+/**
+ * Declarative global configuration (Singleton mode).
+ *
+ * ```ts
+ * import { venus } from "@braydev/venus";
+ *
+ * venus.config({ baseURL: "https://api.example.com", timeout: 8000 });
+ *
+ * const current = venus.config(); // read back the active config
+ * venus.reset();                  // clear everything (e.g. on logout)
+ * ```
+ *
+ * Merges only the provided keys; omitted keys keep their value.
+ */
+function config(options: VenusConfigInput): void;
+function config(): VenusConfigInput;
+function config(options?: VenusConfigInput): VenusConfigInput | void {
+  if (options === undefined) {
+    return {
+      baseURL: state.baseURL,
+      headers: { ...state.headers },
+      timeout: state.timeout,
+      retry: state.retry,
+    };
+  }
+
+  if (options.baseURL !== undefined) {
+    state.baseURL = normalizeBaseURL(options.baseURL);
+  }
+  if (options.headers !== undefined) {
+    state.headers = { ...options.headers };
+  }
+  if (options.timeout !== undefined) {
+    state.timeout = options.timeout;
+  }
+  if (options.retry !== undefined) {
+    state.retry = options.retry;
+  }
+}
+
+/** Clears every global setting (baseURL, headers, timeout and retry). */
+function reset(): void {
+  state.baseURL = "";
+  state.headers = {};
+  state.timeout = undefined;
+  state.retry = undefined;
+}
+
+export const venus = { config, reset };

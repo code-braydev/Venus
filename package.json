@@ -1,7 +1,7 @@
 {
   "name": "@braydev/venus",
-  "version": "2.2.2",
-  "description": "A lightweight, type-safe networking library focused on clean and predictable API calls.",
+  "version": "3.0.0",
+  "description": "HTTP, without friction. A modern, zero-dependency HTTP client with declarative config, instances and a hybrid fetch/XHR engine.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -28,8 +28,5 @@
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
-  },
-  "dependencies": {
-    "fast-xml-parser": "^5.7.1"
   }
 }

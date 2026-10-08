@@ -1,10 +1,9 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { get, send, update, updateOnly, remove, getRss, venusConfig } from "../src/index";
+import { get, send, update, updateOnly, remove, venus } from "../src/index";
 
 describe("Venus Ultimate Robustness & Edge Case Test Suite", () => {
   afterEach(() => {
-    venusConfig.setBaseURL("");
-    venusConfig.setGlobalHeaders({});
+    venus.reset();
     vi.restoreAllMocks();
   });
 
@@ -117,7 +116,7 @@ describe("Venus Ultimate Robustness & Edge Case Test Suite", () => {
       expect(res.data?.get("key")).toBe("value");
     });
 
-    it("should return PARSING_ERROR when JSON response is malformed", async () => {
+    it("should return JSON_PARSE_ERROR when JSON response is malformed", async () => {
       vi.spyOn(globalThis, "fetch").mockResolvedValue(
         new Response("{ invalid json }", {
           status: 200,
@@ -127,8 +126,8 @@ describe("Venus Ultimate Robustness & Edge Case Test Suite", () => {
 
       const res = await get("https://api.example.com/malformed", { responseType: "json" });
       expect(res.ok).toBe(false);
-      expect(res.errorCode).toBe("PARSING_ERROR");
-      expect(res.error).toContain("Response parsing failed");
+      expect(res.errorCode).toBe("JSON_PARSE_ERROR");
+      expect(res.error).toContain("invalid JSON body");
     });
 
     it("should handle 205 Reset Content properly", async () => {
@@ -266,30 +265,6 @@ describe("Venus Ultimate Robustness & Edge Case Test Suite", () => {
       expect(res.ok).toBe(true);
       const init = fetchSpy.mock.calls[0][1] as RequestInit;
       expect(init.method).toBe("PATCH");
-    });
-  });
-
-  describe("6. RSS Robustness & Error Handling", () => {
-    it("should handle network errors gracefully in getRss", async () => {
-      vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("DNS lookup failed"));
-
-      const res = await getRss("https://api.example.com/rss-fail");
-      expect(res.ok).toBe(false);
-      expect(res.errorCode).toBe("NETWORK_ERROR");
-      expect(res.error).toContain("DNS lookup failed");
-    });
-
-    it("should return PARSING_ERROR for non-XML text response in getRss", async () => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValue(
-        new Response("Just plain text, not xml", {
-          status: 200,
-          headers: { "content-type": "text/plain" },
-        }),
-      );
-
-      const res = await getRss("https://api.example.com/plain");
-      expect(res.ok).toBe(false);
-      expect(res.errorCode).toBe("PARSING_ERROR");
     });
   });
 });

@@ -1,12 +1,14 @@
 import {
   ParamsArrayFormat,
+  VenusConfigInput,
   VenusErrorCode,
   VenusOptions,
   VenusResponse,
   VenusResponseType,
   VenusRetryOptions,
 } from "./types.js";
-import { venusConfig } from "../utils/config.js";
+import { readConfig } from "../utils/config.js";
+import { xhrRequest } from "./xhr.js";
 
 const DEFAULT_RETRY_STATUS = [408, 429, 500, 502, 503, 504];
 
@@ -98,11 +100,10 @@ function serializeParams(
   return search.toString();
 }
 
-function composeUrl(path: string, options: VenusOptions): string {
-  const baseUrl = options.baseUrl ?? venusConfig.getBaseURL();
+function composeUrl(path: string, options: VenusOptions, baseURL: string): string {
   const rootUrl = path.startsWith("http")
     ? path
-    : `${baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
+    : `${baseURL}${path.startsWith("/") ? path : `/${path}`}`;
 
   const query = serializeParams(
     options.params,
@@ -117,7 +118,7 @@ function composeUrl(path: string, options: VenusOptions): string {
 }
 
 function normalizeRetryConfig(
-  retry: VenusOptions["retry"],
+  retry: VenusConfigInput["retry"],
 ): ParsedRetry | null {
   if (!retry) {
     return null;
@@ -185,39 +186,42 @@ function getAbortErrorCode(
   };
 }
 
-function buildFetchOptions(options: VenusOptions): RequestBuildResult {
+function buildFetchOptions(
+  options: VenusOptions,
+  scopeHeaders: Record<string, string>,
+  timeout: number | undefined,
+): RequestBuildResult {
   const {
     responseType: _responseType,
-    timeout,
+    timeout: _timeout,
     params: _params,
     paramsArrayFormat: _paramsArrayFormat,
     retry: _retry,
     hooks: _hooks,
     onTelemetry: _onTelemetry,
     baseUrl: _baseUrl,
+    defaults: _defaults,
+    progress: _progress,
     signal,
     headers: rawHeaders,
     ...rest
   } = options;
 
-  // Merge global headers from venusConfig with per-request headers.
-  // Per-request headers override global headers when keys collide.
-  const headers = new Headers();
-  try {
-    const global = venusConfig.getGlobalHeaders?.() ?? {};
-    for (const [k, v] of Object.entries(global)) {
-      headers.set(k, v as string);
-    }
-  } catch (e) {
-    // If getGlobalHeaders is not present or fails, ignore and continue.
-  }
+  // Layer headers: scope (global or instance) first, per-request on top.
+  // Allocations only happen when headers actually exist on that layer.
+  let headers: Headers | undefined =
+    Object.keys(scopeHeaders).length > 0 ? new Headers(scopeHeaders) : undefined;
 
   if (rawHeaders) {
-    const override = new Headers(rawHeaders as HeadersInit);
-    for (const [k, v] of override.entries()) {
-      headers.set(k, v);
+    const requestHeaders = new Headers(rawHeaders as HeadersInit);
+    if (headers) {
+      const base = headers;
+      requestHeaders.forEach((value, key) => base.set(key, value));
+    } else {
+      headers = requestHeaders;
     }
   }
+
   const hasBody = rest.body !== undefined && rest.body !== null;
 
   // Only default to JSON when the body is not a native fetch type.
@@ -227,58 +231,62 @@ function buildFetchOptions(options: VenusOptions): RequestBuildResult {
     hasBody &&
     !(rest.body instanceof FormData) &&
     !(rest.body instanceof Blob) &&
-    !(rest.body instanceof URLSearchParams) &&
-    !headers.has("Content-Type")
+    !(rest.body instanceof URLSearchParams)
   ) {
-    headers.set("Content-Type", "application/json");
+    if (!headers) {
+      headers = new Headers();
+    }
+    if (!headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
   }
 
+  // `rest` is a fresh object created by the destructuring above.
+  const fetchOptions: RequestInit = rest;
+  if (headers) {
+    fetchOptions.headers = headers;
+  }
+
+  const wantsTimeout = typeof timeout === "number" && timeout > 0;
+
+  // Fast path: no timeout and no external signal means no abort plumbing
+  // at all (saves AbortControllers/listeners on the common request).
+  if (!signal && !wantsTimeout) {
+    return {
+      fetchOptions,
+      timeoutTriggered: () => false,
+    };
+  }
+
+  const signalController = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let didTimeout = false;
-  let timeoutController: AbortController | null = null;
-
-  if (typeof timeout === "number" && timeout > 0) {
-    timeoutController = new AbortController();
-    timer = setTimeout(() => {
-      didTimeout = true;
-      timeoutController?.abort();
-    }, timeout);
-  }
-
   let externalAbortListener: (() => void) | undefined;
-  const signalController = new AbortController();
 
   if (signal?.aborted) {
     signalController.abort();
   }
 
-  if (timeoutController?.signal.aborted) {
-    signalController.abort();
+  if (wantsTimeout) {
+    timer = setTimeout(() => {
+      didTimeout = true;
+      signalController.abort();
+    }, timeout);
   }
 
-  const syncAbort = () => {
-    if (signal?.aborted || timeoutController?.signal.aborted) {
-      signalController.abort();
-    }
-  };
-
   if (signal) {
-    externalAbortListener = () => syncAbort();
+    externalAbortListener = () => {
+      if (signal.aborted) {
+        signalController.abort();
+      }
+    };
     signal.addEventListener("abort", externalAbortListener, { once: true });
   }
 
-  if (timeoutController) {
-    timeoutController.signal.addEventListener("abort", () => syncAbort(), {
-      once: true,
-    });
-  }
+  fetchOptions.signal = signalController.signal;
 
   return {
-    fetchOptions: {
-      ...rest,
-      headers,
-      signal: signalController.signal,
-    },
+    fetchOptions,
     clearTimeout: () => {
       if (timer) {
         clearTimeout(timer);
@@ -360,11 +368,11 @@ async function parseResponse<T>(
       data: null,
       ok: false,
       status: response.status,
-      errorCode: "PARSING_ERROR",
+      errorCode: "JSON_PARSE_ERROR",
       error:
         err instanceof Error
-          ? `Venus: Response parsing failed. ${err.message}`
-          : "Venus: Response parsing failed.",
+          ? `Venus: The server returned an invalid JSON body. ${err.message}`
+          : "Venus: The server returned an invalid JSON body.",
     };
   }
 }
@@ -399,21 +407,64 @@ function shouldRetry(
 }
 
 /**
+ * Resolves the effective configuration for one request.
+ * Instance defaults (from `createInstance`) fully replace the global
+ * singleton scope, keeping instances independent and predictable.
+ */
+function resolveScope(options: VenusOptions): {
+  baseURL: string;
+  headers: Record<string, string>;
+  timeout: number | undefined;
+  retry: VenusConfigInput["retry"];
+} {
+  const instance = options.defaults;
+
+  if (instance) {
+    return {
+      baseURL: options.baseUrl ?? instance.baseURL ?? "",
+      headers: instance.headers ?? {},
+      timeout: options.timeout ?? instance.timeout,
+      retry: options.retry ?? instance.retry,
+    };
+  }
+
+  const global = readConfig();
+
+  return {
+    baseURL: options.baseUrl ?? global.baseURL,
+    headers: global.headers,
+    timeout: options.timeout ?? global.timeout,
+    retry: options.retry ?? global.retry,
+  };
+}
+
+/**
  * Core request engine for Venus.
- * Handles URL assembly, header injection, and multi-format response parsing.
+ * Handles URL assembly, header injection, config scoping and multi-format
+ * response parsing through the hybrid fetch/XHR transport.
  */
 export async function request<T>(
   path: string,
   options: VenusOptions = {},
 ): Promise<VenusResponse<T>> {
   const responseType = options.responseType ?? "auto";
-  const retry = normalizeRetryConfig(options.retry);
+  const scope = resolveScope(options);
+  const retry = normalizeRetryConfig(scope.retry);
   const method = options.method ?? "GET";
-  const url = composeUrl(path, options);
+  const url = composeUrl(path, options, scope.baseURL);
   const externalSignal = options.signal ?? null;
 
+  // The progress callback implies the XHR engine (fetch has no upload
+  // progress without streams). Direction is detected automatically:
+  // a request that sends a body reports upload, the rest report download.
+  const useXHR = Boolean(options.progress);
+  const direction: "upload" | "download" =
+    useXHR && options.body != null && method !== "GET" && method !== "HEAD"
+      ? "upload"
+      : "download";
+
   for (let attempt = 0; ; attempt += 1) {
-    const build = buildFetchOptions(options);
+    const build = buildFetchOptions(options, scope.headers, scope.timeout);
     let fetchOptions = build.fetchOptions;
 
     if (options.hooks?.beforeRequest) {
@@ -430,7 +481,13 @@ export async function request<T>(
     const startedAt = Date.now();
 
     try {
-      const response = await fetch(url, fetchOptions);
+      const response = useXHR
+        ? await xhrRequest(url, fetchOptions, {
+            responseType,
+            progress: options.progress,
+            direction,
+          })
+        : await fetch(url, fetchOptions);
 
       if (options.hooks?.afterResponse) {
         await options.hooks.afterResponse({

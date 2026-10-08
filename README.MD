@@ -1,93 +1,96 @@
 # 🪐 Venus
 
-### 🚀 New in v2.2.0
+> **EN:** HTTP, without friction. A modern, zero-dependency HTTP client that turns complex fetch patterns into a calm and predictable experience.
+>
+> **ES:** HTTP, sin fricción. Un cliente HTTP moderno y de cero dependencias que convierte los patrones complejos de fetch en una experiencia tranquila y predecible.
 
-- **RSS/Atom item images**: each feed item now exposes `enclosure`, `media`, and a ready-to-use `image` URL (from `<enclosure>`, Media RSS, Atom enclosures, or the first `<img>` in the item HTML).
-- **`RETRY_EXHAUSTED`**: when retries run out, you get a clear `errorCode` with the last HTTP status.
-- **Upload fixes**: `FormData`/`Blob` bodies no longer get a forced JSON `Content-Type` (multipart uploads work again).
+---
 
-### 🚀 New in v2.0.0
+### 🚀 New in v3.0.0
 
-- **Smart Parsing**: Automatically detects if the response is JSON or Text (perfect for RSS/XML).
-- **Multi-Format Support**: Added support for `blob`, `formData`, and `arrayBuffer`.
-- **Query Params**: New `params` option to handle URL query strings safely.
-- **Enhanced DX**: Full JSDoc documentation for better IntelliSense in VS Code.
+- **Declarative Singleton config**: `venus.config({ baseURL, headers, timeout, retry })` in one call.
+- **Multi-instance mode**: `createInstance({ baseURL, headers, timeout, retry })` for independent, self-contained clients.
+- **Hybrid engine (`fetch` + `XMLHttpRequest`)**: `fetch` by default; transparent switch to XHR when you need detailed metrics and upload/download progress.
+- **Zero dependencies**: all RSS/Atom support (`getRss`, `fast-xml-parser`) was removed from the core. Venus is a pure HTTP/HTTPS client — no feed code, no parser, nothing extra.
 
-### 🚀 v2.0.0 Improvements
+---
 
-- **Unified API options** across all methods: `headers`, `timeout`, `signal`, `params`, `responseType`, `retry`.
-- **Richer error contract** with `errorCode` and optional `status`.
-- **Configurable retry policy** with backoff for transient failures (408, 429, 5xx).
-- **Lightweight hooks**: `beforeRequest` and `afterResponse`.
-- **RSS/Atom helper** with normalized feed parsing via `getRss`.
-- **RSS modes**: `strict` (default) and `lenient` for non-standard XML feeds.
-
-### Networking, without the friction.
-
-Venus is a modern, lightweight networking library for JavaScript and TypeScript that makes working with APIs feel effortless.
-
-No bloated configs.  
-No fragile patterns.  
-No surprises.
-
-Venus turns network requests into a **calm, predictable experience** by refining `fetch` into a clean, type-safe, and resilient API. You focus on your app — Venus handles the edge cases.
-
-## ✨ Why Venus?
+### Why Venus?
 
 - **Clean syntax** that stays out of your way
 - **Type-safe by default**, from request to response
-- **Built-in resilience** (timeouts, predictable errors)
-- **Consistent results**, no matter how a request fails
+- **Built-in resilience** (timeouts, retries, predictable errors)
+- **Consistent contract**, no matter how a request fails
 - **Zero dependencies**, powered by native Web APIs
+- **Two configuration modes**: one global singleton or many isolated instances
 
-Venus doesn’t try to do everything.  
-It does one thing **exceptionally well**:  
-making network requests simple, elegant, and reliable.
+Venus doesn't try to do everything.
+It does one thing **exceptionally well**:
+making HTTP requests simple, elegant, and reliable.
 
 ---
 
 ## 🚀 Quick Start
 
-Get up and running with Venus in minutes.
+### 1. Singleton mode (simple, global)
 
-### 1. Configure the base URL
-
-Set your API base URL once at your app’s entry point (e.g. `main.ts` or `index.ts`).
+Set your API defaults once at your app's entry point:
 
 ```ts
-import { venusConfig } from "@braydev/venus";
+import { venus } from "@braydev/venus";
 
-venusConfig.setBaseURL("https://api.yourdomain.com");
+venus.config({
+  baseURL: "https://api.yourdomain.com",
+  headers: {
+    Authorization: "Bearer my-token",
+    "X-App-Version": "3.0.0",
+  },
+  timeout: 8000,
+  retry: { attempts: 2, backoffMs: 200 },
+});
 ```
 
-### 1.1 Configure global headers
-
-You can set headers that apply to every request made with Venus (useful for auth tokens, tracing headers, etc.). Per-request headers override these global headers.
+Only the keys you provide are merged; the rest keep their previous values.
+Per-request options always override the global defaults.
 
 ```ts
-import { venusConfig } from "@braydev/venus";
+const current = venus.config(); // read back the active configuration
+venus.reset();                  // clear everything (e.g. on logout)
+```
 
-venusConfig.setBaseURL("https://api.yourdomain.com");
+`venus` is the only configuration surface — there is no legacy config API.
 
-venusConfig.setGlobalHeaders({
-  Authorization: "Bearer my-token",
-  "X-App-Version": "2.2.0",
+### 2. Multi mode (independent instances)
+
+Create as many isolated clients as you need — perfect for micro-frontends,
+multiple APIs or per-service boundaries:
+
+```ts
+import { createInstance } from "@braydev/venus";
+
+export const api = createInstance({
+  baseURL: "https://api.example.com",
+  headers: { Authorization: "Bearer token" },
+  timeout: 8000,
 });
 
-// You can later read them back (returns a plain object)
-const current = venusConfig.getGlobalHeaders();
+export const uploads = createInstance({
+  baseURL: "https://cdn.example.com",
+  timeout: 30_000,
+});
 ```
 
-### 2. Make your first request
+> Instances **never** read the global singleton config and never leak their
+> own defaults into it: scope precedence is `per-request > instance > nothing`.
+
+### 3. Make your first request
 
 Venus always returns a predictable response object — no `try/catch` required.
 
 ```ts
-import { get, getRss, send } from "@braydev/venus";
+import { get, send } from "@braydev/venus";
 
-// Fetching data
 const { data, ok, error, errorCode } = await get<User>("/profile", {
-  timeout: 8000,
   params: { include: ["roles", "permissions"] },
   paramsArrayFormat: "repeat",
 });
@@ -98,63 +101,30 @@ if (ok) {
   console.error(errorCode, error);
 }
 
-// Sending data
-const newUser = { name: "Brayan", role: "Developer" };
-const result = await send("/users", newUser, {
-  timeout: 10000,
-  retry: {
-    attempts: 2,
-    backoffMs: 200,
-  },
-});
-
-// Fetching and parsing RSS/Atom feed
-const feedResult = await getRss("https://hnrss.org/frontpage", {
-  timeout: 8000,
-  retry: true,
-  rssMode: "strict",
-});
-
-if (feedResult.ok) {
-  console.log(feedResult.data.title);
-  console.log(feedResult.data.items[0]?.title);
-}
-
-// --- New in v1.2.0: Powerful Query Params & Smart Parsing ---
-
-// Effortless filtering with the 'params' option
-const { data: news } = await get("/latest", {
-  params: { category: "tech", limit: 5 },
-  responseType: "auto",
-});
-
-/**
- * Smart Response Detection:
- * Venus automatically detects if 'news' should be a JavaScript Object (JSON)
- * or a raw String (RSS/XML/HTML). No extra configuration required.
- */
-if (typeof news === "string") {
-  console.log("RSS/XML content detected:", news);
-} else {
-  console.log("JSON API object detected:", news);
-}
+const result = await send("/users", { name: "Brayan", role: "Developer" });
 ```
 
-That’s it.
-No boilerplate. No guesswork. Just clean network calls.
+Or through an instance:
+
+```ts
+import { api } from "./client";
+
+const { data } = await api.get<User>("/profile");
+```
 
 ---
 
 ## 📦 API Methods
 
-| Method       | Function                              | Description                                           |
-| :----------- | :------------------------------------ | :---------------------------------------------------- |
-| `get`        | `get<T>(path, options?)`              | Fetch resources with parser/timeout/retry controls.   |
-| `getRss`     | `getRss(path, options?)`              | Fetch and parse RSS/Atom feeds to normalized objects. |
-| `send`       | `send<T>(path, body, options?)`       | Create resources (POST) with validated body.          |
-| `update`     | `update<T>(path, body, options?)`     | Replace resources entirely (PUT).                     |
-| `updateOnly` | `updateOnly<T>(path, body, options?)` | Update resources partially (PATCH).                   |
-| `remove`     | `remove<T>(path, options?)`           | Delete resources with 204 handling.                   |
+| Method       | Function                              | Description                                       |
+| :----------- | :------------------------------------ | :------------------------------------------------ |
+| `get`        | `get<T>(path, options?)`              | Fetch resources with parser/timeout/retry controls. |
+| `send`       | `send<T>(path, body, options?)`       | Create resources (POST) with validated body.      |
+| `update`     | `update<T>(path, body, options?)`     | Replace resources entirely (PUT).                 |
+| `updateOnly` | `updateOnly<T>(path, body, options?)` | Update resources partially (PATCH).               |
+| `remove`     | `remove<T>(path, options?)`           | Delete resources with 204 handling.               |
+
+Every method is also available on instances created with `createInstance()`.
 
 ### Response Contract
 
@@ -169,7 +139,7 @@ type VenusResponse<T> = {
     | "TIMEOUT"
     | "ABORTED"
     | "NETWORK_ERROR"
-    | "PARSING_ERROR"
+    | "JSON_PARSE_ERROR"
     | "INVALID_BODY"
     | "RETRY_EXHAUSTED"
     | "UNKNOWN_ERROR"
@@ -177,11 +147,17 @@ type VenusResponse<T> = {
 };
 ```
 
-### Common Options
+This contract is **unchanged** across engines: `fetch` and XHR responses are
+normalized into the exact same shape.
+
+---
+
+## ⚙️ Options
 
 ```ts
 {
   headers?: HeadersInit;
+  baseUrl?: string;
   timeout?: number;
   signal?: AbortSignal;
   params?: Record<string, unknown>;
@@ -192,140 +168,165 @@ type VenusResponse<T> = {
     backoffMs?: number;
     maxBackoffMs?: number;
     retryOn?: number[];
+    shouldRetry?: (ctx) => boolean;
   };
   hooks?: {
     beforeRequest?: (ctx) => void | RequestInit | Promise<void | RequestInit>;
     afterResponse?: (ctx) => void | Promise<void>;
   };
+  onTelemetry?: (event) => void;
+
+  // v3: unified progress callback (switches to XHR automatically)
+  progress?: (progress: VenusProgress) => void;
 }
 ```
 
-### RSS and Atom
+---
 
-Venus can consume feeds without manual XML parsing:
+## 🚚 Hybrid Engine (`fetch` + `XMLHttpRequest`)
+
+Venus is pragmatic about performance: **`fetch` is the default transport**
+for its low latency and native streaming. When you pass a `progress` callback,
+Venus switches transparently to `XMLHttpRequest` — no flags, no configuration:
 
 ```ts
-import { getRss } from "@braydev/venus";
+import { send, get } from "@braydev/venus";
 
-const feed = await getRss("https://example.com/rss.xml", {
-  timeout: 7000,
-  rssMode: "strict", // strict | lenient
+// Sending a body -> upload progress
+await send("/upload", formDataBody, {
+  progress: ({ direction, loaded, percent }) => {
+    console.log(`${direction}: ${loaded} ${percent}%`);
+    // e.g. "upload: 125.0KB / 523.0KB 24%"
+  },
 });
 
-if (feed.ok) {
-  for (const item of feed.data.items) {
-    console.log(item.title, item.link);
-  }
-}
-```
-
-### Feed Item Fields
-
-Each `VenusRssItem` exposes, besides `title`/`link`/`description`/`content`, image-related helpers:
-
-```ts
-{
-  title: string;
-  link?: string;
-  description?: string; // raw HTML when the feed embeds markup
-  content?: string;
-  pubDate?: string;
-  guid?: string;
-  author?: string;
-  categories?: string[];
-  // RSS <enclosure> / Atom <link rel="enclosure">
-  enclosure?: { url: string; type?: string; length?: number };
-  // Media RSS attachments
-  media?: {
-    content?: { url: string; type?: string; medium?: string }[];
-    thumbnail?: { url: string }[];
-  };
-  // Best-guess image URL (enclosure → media → first <img> in HTML)
-  image?: string;
-}
-```
-
-Use `item.image` for a ready-to-use thumbnail, or inspect `enclosure`/`media` for the raw sources (covers podcasts, video and image enclosures).
-
-### RSS Modes
-
-- `strict` (default): fails if XML is not valid RSS/Atom structure.
-- `lenient`: does best-effort normalization for custom/non-standard XML feeds.
-
-```ts
-const strictFeed = await getRss("https://example.com/feed.xml", {
-  rssMode: "strict",
-});
-
-const lenientFeed = await getRss("https://example.com/custom-xml", {
-  rssMode: "lenient",
+// Receiving a response -> download progress
+await get("/export/large.csv", {
+  responseType: "text",
+  progress: ({ direction, loaded, percent }) => {
+    console.log(`${direction}: ${loaded} ${percent}%`);
+    // e.g. "download: 1.5MB / 6.0MB 25%"
+  },
 });
 ```
 
-### Frontend Example (SPA)
+Rules:
+
+- `progress` implies the XHR engine (fetch has no upload progress without
+  streams) — the engine selection is always automatic.
+- Direction is detected for you: a request that **sends a body** reports
+  `direction: "upload"`, everything else reports `direction: "download"`.
+
+Progress payload:
 
 ```ts
-import { getRss } from "@braydev/venus";
-
-export async function loadNews() {
-  const result = await getRss("https://hnrss.org/frontpage", {
-    timeout: 6000,
-    retry: true,
-    rssMode: "strict",
-  });
-
-  if (!result.ok) {
-    throw new Error(result.error ?? "Feed error");
-  }
-
-  return result.data.items.slice(0, 10);
-}
+type VenusProgress = {
+  direction: "upload" | "download"; // which transfer is being reported
+  loaded: string;                   // human-readable: "125.0KB / 523.0KB"
+  percent: number | null;           // 0-100, null when total is unknown
+};
 ```
 
-### Backend Example (Node/SSR)
+Timeouts, `AbortSignal`, hooks, telemetry and retries behave identically on
+both engines.
+
+---
+
+## 🛡️ Resilience
 
 ```ts
-import { getRss } from "@braydev/venus";
-
-export async function fetchTechFeed() {
-  const result = await getRss("https://example.com/custom-feed", {
-    timeout: 8000,
-    retry: { attempts: 2, backoffMs: 200 },
-    rssMode: "lenient",
-  });
-
-  if (!result.ok) {
-    return { items: [], source: "fallback", error: result.error };
-  }
-
-  return {
-    source: result.data.title,
-    items: result.data.items.map((item) => ({
-      title: item.title,
-      link: item.link,
-      publishedAt: item.pubDate,
-    })),
-  };
-}
+const res = await get("/flaky", {
+  timeout: 5000,
+  retry: {
+    attempts: 3,
+    backoffMs: 200,
+    maxBackoffMs: 2000,
+    retryOn: [408, 429, 500, 502, 503, 504],
+  },
+  hooks: {
+    beforeRequest: ({ options }) => {
+      const headers = new Headers(options.headers);
+      headers.set("X-Trace-Id", crypto.randomUUID());
+      return { ...options, headers };
+    },
+    afterResponse: ({ response, durationMs }) => {
+      console.log(response.status, durationMs);
+    },
+  },
+  onTelemetry: (event) => analytics.track("http", event),
+});
 ```
 
-### Changelog
+- **Timeouts** resolve as `{ errorCode: "TIMEOUT", status: 408 }`.
+- **Aborted requests** resolve as `{ errorCode: "ABORTED", status: 499 }`.
+- **Exhausted retries** resolve as `{ errorCode: "RETRY_EXHAUSTED" }`.
+- **Network failures** resolve as `{ errorCode: "NETWORK_ERROR", status: 0 }`.
 
-A changelog is the file where you record what changed in each version (features, fixes, breaking changes).
-It helps users trust updates and migrate faster.
+Nothing throws: the contract always comes back calm and predictable.
 
-- Convention: keep one section per version (`## 1.3.0`, `## 1.2.1`, etc.)
-- Include: Added, Changed, Fixed, Breaking (if any)
-- Follow SemVer (`major.minor.patch`)
+---
 
-### 🧪 Testing
+## 🧭 Query Params
 
-Venus is fully tested with **Vitest**.  
-Run the test suite with:
+```ts
+const { data } = await get("/latest", {
+  params: {
+    category: "tech",
+    limit: 5,
+    tags: ["ai", "web"],
+    filter: { role: "admin" },
+  },
+  paramsArrayFormat: "brackets", // repeat | comma | brackets | indices
+});
+```
+
+Arrays, nested objects, `Date` and `null`/`undefined` handling are built in.
+
+---
+
+## 🔄 Migrating from v2
+
+1. **RSS/Atom support removed**: `getRss` and `fast-xml-parser` are gone.
+   Venus v3 is a specialized HTTP/HTTPS client with zero dependencies — no
+   feed code and no parsers ship with the package.
+2. **`venusConfig` was removed**: replace the granular setters with the
+   declarative call (it also covers `timeout` and `retry`):
+
+   | v2 (removed)                       | v3 replacement                    |
+   | ---------------------------------- | --------------------------------- |
+   | `venusConfig.setBaseURL(url)`      | `venus.config({ baseURL: url })`  |
+   | `venusConfig.setGlobalHeaders(h)`  | `venus.config({ headers: h })`    |
+   | `venusConfig.getGlobalHeaders()`   | `venus.config().headers`          |
+   | `venusConfig.reset()`              | `venus.reset()`                   |
+
+3. **New optional `createInstance()`**: adopt multi-mode only if you need
+   isolated clients; singleton mode behaves like v2 by default.
+4. **Unified `progress` callback**: `useXHR`, `onUploadProgress` and
+   `onDownloadProgress` were replaced by a single `progress` option; the
+   engine and the transfer direction are detected automatically.
+
+```diff
+- import { venusConfig, getRss } from "@braydev/venus";
++ import { venus, get } from "@braydev/venus";
+
+- venusConfig.setBaseURL("https://api.example.com");
++ venus.config({ baseURL: "https://api.example.com", timeout: 8000 });
+
+- const feed = await getRss("https://example.com/rss.xml");
+
+- onUploadProgress: (p) => {},       // v2
+- useXHR: true,                      // v2
++ progress: ({ direction, percent }) => {}, // v3
+```
+
+---
+
+## 🧪 Testing
+
+Venus is fully tested with **Vitest**.
 
 ```bash
 npm test
-
 ```
 
 ## 📄 License
