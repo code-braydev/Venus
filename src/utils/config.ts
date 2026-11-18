@@ -178,4 +178,4 @@ function abort(): void {
   abortAll(singletonRegistry);
 }
 
-export const venus = { config, reset, abort };
+export { config, reset, abort };

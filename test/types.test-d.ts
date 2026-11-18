@@ -1,8 +1,9 @@
 import { describe, it, expectTypeOf } from "vitest";
-import { get, remove, createClient } from "../src/index";
+import { venus, createClient } from "../src/index";
 import type { VenusErrorCode } from "../src/index";
 
 type User = { name: string };
+const { get, remove } = venus;
 
 describe("VenusResponse narrowing", () => {
   it("narrows data to T when ok is true", async () => {

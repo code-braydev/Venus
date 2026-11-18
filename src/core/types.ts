@@ -330,6 +330,23 @@ export interface VenusClient {
 }
 
 /**
+ * The global `venus` facade (singleton mode): declarative config plus the
+ * same request methods as a client. Exclusive with `createClient()`.
+ */
+export interface VenusSingleton
+  extends Pick<
+    VenusClient,
+    "get" | "send" | "update" | "updateOnly" | "remove" | "abort"
+  > {
+  /** Merges the provided keys into the global config. */
+  config(options: VenusConfigInput): void;
+  /** Reads back a copy of the active global config. */
+  config(): VenusConfigInput;
+  /** Clears every global setting (e.g. on logout). */
+  reset(): void;
+}
+
+/**
  * Utility type to infer payload data from a VenusResponse.
  */
 export type InferData<T extends VenusResponse<unknown>> = T["data"];

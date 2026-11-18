@@ -1,6 +1,8 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
-import { get, send, venus } from "../src/index";
+import { venus } from "../src/index";
 import type { VenusProgress } from "../src/index";
+
+const { get, send } = venus;
 
 type Behavior = {
   status?: number;

@@ -1,5 +1,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { get, send, update, updateOnly, remove } from "../src/index";
+import { venus } from "../src/index";
+
+const { get, send, update, updateOnly, remove } = venus;
 
 describe("Venus Methods (Fully Mocked)", () => {
   afterEach(() => {

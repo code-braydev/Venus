@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added:
 
-- **Declarative Singleton config**: `venus.config({ baseURL, headers, timeout, retry })` merges only the provided keys, `venus.config()` (no args) reads back the active configuration and `venus.reset()` clears everything. Global `timeout` and `retry` now apply to every standalone request and can be overridden per request.
+- **Declarative Singleton config**: `venus.config({ baseURL, headers, timeout, retry })` merges only the provided keys, `venus.config()` (no args) reads back the active configuration and `venus.reset()` clears everything. Global `timeout` and `retry` now apply to every request made through `venus` and can be overridden per request.
 - **Multi-client mode**: `createClient({ baseURL, headers, timeout, retry })` returns an independent, **immutable** client with `get`, `send`, `update`, `updateOnly`, `remove` and a read-only `config()` getter. Instances never read the global singleton config (precedence: per-request > instance > nothing).
 - **`disableHeaders`**: per-request option (`disableHeaders: ["authorization"]`) removes inherited header names (case-insensitive) without touching the singleton/instance defaults.
 - **Hybrid engine (`fetch` + `XMLHttpRequest`)**: `fetch` remains the default transport; providing a `progress` callback switches the request to XHR transparently — no flags required. Both engines normalize into the same `{ data, ok, status, error, errorCode }` contract, sharing timeouts, `AbortSignal`, hooks, telemetry and retries.
@@ -24,6 +24,8 @@ All notable changes to this project will be documented in this file.
 - **`retryMethods`** option for `retry`, plus `Retry-After` support (seconds or HTTP date, capped by `maxBackoffMs`) and jitter on the exponential backoff.
 
 ### Removed (Breaking):
+
+- **Standalone request functions**: `get`, `send`, `update`, `updateOnly` and `remove` are no longer exported. The singleton is now complete: `venus.get(...)`, `venus.send(...)`, `venus.update(...)`, `venus.updateOnly(...)`, `venus.remove(...)`, symmetric with `api.get(...)` on clients. The package exports only `venus`, `createClient` and the types.
 
 - **`getRss` and all RSS/Atom support**: Venus is now a specialized HTTP/HTTPS client with **zero dependencies** — `fast-xml-parser` was removed entirely (dependencies and dev dependencies) and no feed/parser code ships with the package.
 - **RSS types**: `VenusRssFeed`, `VenusRssItem`, `VenusRssMediaContent`, `VenusRssMode` and `VenusRssOptions` were removed from the public API.
@@ -44,13 +46,15 @@ All notable changes to this project will be documented in this file.
 - **`remove`**: the redundant 204 branch was dropped; `204` resolves as `{ ok: true, data: null }` (type it as `remove<null>`).
 - **Scope-wide cancellation**: every attempt now owns an `AbortController` (needed by `abort()`), so `signal` is always set on the fetch call.
 
-- **Exclusive modes**: singleton and instance modes cannot be mixed. The first mode claimed (`venus.config` or `createClient`) locks the other: config calls throw and standalone `get/send/...` return `MODE_CONFLICT`.
+- **Exclusive modes**: singleton and instance modes cannot be mixed. The first mode claimed (`venus.config` or `createClient`) locks the other: config calls throw and `venus.get/send/...` return `MODE_CONFLICT`.
 - **Hook merge semantics**: whatever `beforeRequest` returns is merged into the request (headers combined, `disableHeaders` applied) instead of replacing it wholesale; the hook receives a read-only copy, so mutating `options` has no effect.
 - **Scope-aware request engine**: header/timeout/retry/baseURL resolution was centralized in a config scope layer that serves both singleton and instance modes.
 - **Leaner hot path**: abort plumbing (`AbortController`, listeners) and `Headers` merging are now only allocated when a request actually uses timeouts, signals, headers or bodies — fewer allocations per call without changing behavior.
 - **Package**: version bumped to `3.0.0`, description updated to the official lema.
 
 ### Migration Notes:
+
+- Replace standalone imports: `import { get } from "@braydev/venus"` → `import { venus } ...` and `get("/x")` → `venus.get("/x")` (same for `send`, `update`, `updateOnly`, `remove`).
 
 - Retries on `POST`/`PATCH` are now opt-in: add `retryMethods: ["POST"]` (or a `shouldRetry`) if you relied on them.
 - Failed responses type `data` as `unknown`; narrow it (e.g. `(res.data as ApiError)`) before reading the server's error body.
@@ -60,7 +64,7 @@ All notable changes to this project will be documented in this file.
 - Replace progress options: `onUploadProgress`/`onDownloadProgress`/`useXHR` → `progress: ({ direction, loaded, percent }) => {}` and handle both directions in the same callback.
 - `PARSING_ERROR` → `JSON_PARSE_ERROR` if you match on error codes.
 - Once you configure a `baseURL`, switch absolute URLs to relative paths: `get("https://api.com/users")` → `venus.config({ baseURL: "https://api.com" })` (or `createClient`) + `get("/users")`.
-- Pick **one mode**: either `venus` + standalone methods, or `createClient()` clients. Mixing throws (`MODE_CONFLICT` for requests).
+- Pick **one mode**: either `venus` (`venus.get/send/...`), or `createClient()` clients. Mixing throws (`MODE_CONFLICT` for requests).
 - Delete inherited headers per request with `disableHeaders: ["authorization"]` instead of removing them manually.
 - `beforeRequest` should **return** `{ headers: { ... } }`; the result is merged. Mutating the received `options` no longer affects the request.
 

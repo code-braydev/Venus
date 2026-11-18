@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { get, send, update, updateOnly, remove, venus } from "../src/index";
+import { venus } from "../src/index";
+
+const { get, send, update, updateOnly, remove } = venus;
 
 describe("Venus Ultimate Robustness & Edge Case Test Suite", () => {
   beforeEach(() => {

@@ -58,14 +58,15 @@ venus.config({
 Only the keys you provide are merged; the rest keep their previous values.
 Per-request options always override the global defaults — **except the URL**:
 singleton mode is meant for **one API**. Once a `baseURL` is configured the
-scope is **closed**: methods only accept relative paths (`get("/users")`) and
+scope is **closed**: methods only accept relative paths (`venus.get("/users")`) and
 absolute URLs return `INVALID_URL`. With **no configuration at all**, absolute
-URLs pass straight through (`get("https://api.example.com/users")`). If you
+URLs pass straight through (`venus.get("https://api.example.com/users")`). If you
 need another API, use `createClient()`.
 
 > **Modes are exclusive.** Choose singleton **or** instances. Once a client is
-> created with `createClient()`, the `venus` facade and the standalone
-> `get/send/...` functions are disabled and return `MODE_CONFLICT`.
+> created with `createClient()`, the whole `venus` facade (`venus.config()`,
+> `venus.get()`, `venus.send()`, ...) is disabled: config calls throw and
+> requests return `MODE_CONFLICT`.
 
 ```ts
 const current = venus.config(); // read back the active configuration
@@ -101,7 +102,7 @@ api.config(); // { baseURL, headers, timeout, retry } — read-only snapshot
 > - Instances **never** read the global singleton config and never leak their
 >   own defaults into it: scope precedence is `per-request > instance > nothing`.
 > - Creating an instance locks Venus into **instance mode**: `venus.config()`,
->   `venus.reset()` and standalone `get/send/...` throw or return
+>   `venus.reset()` and `venus.get/send/...` throw or return
 >   `MODE_CONFLICT`.
 
 ### 3. Make your first request
@@ -109,9 +110,9 @@ api.config(); // { baseURL, headers, timeout, retry } — read-only snapshot
 Venus always returns a predictable response object — no `try/catch` required.
 
 ```ts
-import { get, send } from "@braydev/venus";
+import { venus } from "@braydev/venus";
 
-const { data, ok, error, errorCode } = await get<User>("/profile", {
+const { data, ok, error, errorCode } = await venus.get<User>("/profile", {
   params: { include: ["roles", "permissions"] },
   paramsArrayFormat: "repeat",
 });
@@ -122,10 +123,10 @@ if (ok) {
   console.error(errorCode, error);
 }
 
-const result = await send("/users", { name: "Brayan", role: "Developer" });
+const result = await venus.send("/users", { name: "Brayan", role: "Developer" });
 ```
 
-Or through an instance:
+Or through a client (same methods, same contract):
 
 ```ts
 import { api } from "./client";
@@ -139,21 +140,21 @@ const { data } = await api.get<User>("/profile");
 
 | Method       | Function                              | Description                                       |
 | :----------- | :------------------------------------ | :------------------------------------------------ |
-| `get`        | `get<T>(path, options?)`              | Fetch resources with parser/timeout/retry controls. |
-| `send`       | `send<T>(path, body, options?)`       | Create resources (POST) with validated body.      |
-| `update`     | `update<T>(path, body, options?)`     | Replace resources entirely (PUT).                 |
-| `updateOnly` | `updateOnly<T>(path, body, options?)` | Update resources partially (PATCH).               |
-| `remove`     | `remove<T>(path, options?)`           | Delete resources with 204 handling.               |
+| `get`        | `venus.get<T>(path, options?)`              | Fetch resources with parser/timeout/retry controls. |
+| `send`       | `venus.send<T>(path, body, options?)`       | Create resources (POST) with validated body.      |
+| `update`     | `venus.update<T>(path, body, options?)`     | Replace resources entirely (PUT).                 |
+| `updateOnly` | `venus.updateOnly<T>(path, body, options?)` | Update resources partially (PATCH).               |
+| `remove`     | `venus.remove<T>(path, options?)`           | Delete resources with 204 handling.               |
 | `abort`      | `venus.abort()` / `client.abort()`    | Cancel every in-flight request of that scope.     |
 
-Every method is also available on instances created with `createClient()`.
+Every method above has the same signature on a client: `api.get<T>(path, options?)`, `api.send(...)`, and so on. `venus.*` is the singleton; `createClient()` returns an independent one.
 
 ### Response Contract
 
 Check `ok` and TypeScript narrows the response for you:
 
 ```ts
-const res = await get<User>("/me");
+const res = await venus.get<User>("/me");
 
 if (res.ok) {
   res.data.name; // User — typed, no null check needed
@@ -197,7 +198,7 @@ type VenusFailure = {
 ```
 
 A `204 No Content` answer is a success with `data: null`: type it as
-`remove<null>("/users/1")`.
+`venus.remove<null>("/users/1")`.
 
 ```ts
 type VenusMetrics = {
@@ -216,7 +217,7 @@ normalized into the exact same shape.
 ## ⚙️ Options
 
 With a `baseURL` configured (`venus.config` or `createClient`) paths must be
-**relative** (`get("/users")`); absolute paths return `INVALID_URL`. Without
+**relative** (`venus.get("/users")`); absolute paths return `INVALID_URL`. Without
 configuration, absolute URLs are allowed.
 
 ```ts
@@ -272,7 +273,7 @@ touching the network. `responseType: "stream"` returns `response.body` as a
 
 ```ts
 const controller = new AbortController();
-get("/slow", { signal: controller.signal }); // one request
+venus.get("/slow", { signal: controller.signal }); // one request
 controller.abort();
 
 venus.abort();  // every in-flight singleton request
@@ -284,7 +285,7 @@ Aborted requests resolve as `{ errorCode: "ABORTED", status: 499 }`.
 ### Dropping an inherited header
 
 ```ts
-await get("/public", { disableHeaders: ["authorization", "x-app"] });
+await venus.get("/public", { disableHeaders: ["authorization", "x-app"] });
 ```
 
 Only that request is affected; the singleton/instance headers stay intact for
@@ -299,10 +300,10 @@ for its low latency and native streaming. When you pass a `progress` callback,
 Venus switches transparently to `XMLHttpRequest` — no flags, no configuration:
 
 ```ts
-import { send, get } from "@braydev/venus";
+import { venus } from "@braydev/venus";
 
 // Sending a body -> upload progress
-await send("/upload", formDataBody, {
+await venus.send("/upload", formDataBody, {
   progress: ({ direction, loaded, percent }) => {
     console.log(`${direction}: ${loaded} ${percent}%`);
     // e.g. "upload: 125.0KB / 523.0KB 24%"
@@ -310,7 +311,7 @@ await send("/upload", formDataBody, {
 });
 
 // Receiving a response -> download progress
-await get("/export/large.csv", {
+await venus.get("/export/large.csv", {
   responseType: "text",
   progress: ({ direction, loaded, percent }) => {
     console.log(`${direction}: ${loaded} ${percent}%`);
@@ -349,7 +350,7 @@ both engines.
 ## 🛡️ Resilience
 
 ```ts
-const res = await get("/flaky", {
+const res = await venus.get("/flaky", {
   timeout: 5000,
   retry: {
     attempts: 3,
@@ -415,7 +416,7 @@ const api = createClient({
 ## 🧭 Query Params
 
 ```ts
-const { data } = await get("/latest", {
+const { data } = await venus.get("/latest", {
   params: {
     category: "tech",
     limit: 5,
@@ -445,26 +446,29 @@ Arrays, nested objects, `Date` and `null`/`undefined` handling are built in.
    | `venusConfig.getGlobalHeaders()`   | `venus.config().headers`          |
    | `venusConfig.reset()`              | `venus.reset()`                   |
 
-3. **New optional `createClient()`**: adopt multi-mode only if you need
+3. **Standalone methods are gone**: `import { get, send, update, updateOnly,
+   remove }` became `venus.get(...)`, `venus.send(...)`, etc., symmetric with
+   `api.get(...)` on clients. Replace `get("/x")` with `venus.get("/x")`.
+4. **New optional `createClient()`**: adopt multi-mode only if you need
    isolated clients; singleton mode behaves like v2 by default. Instances are
    immutable (`config()` is a read-only getter) and modes are **exclusive**:
-   creating an instance disables `venus` and standalone methods.
-4. **Closed scopes**: once a `baseURL` is configured, methods only accept
-   relative paths (`get("https://…")` returns `INVALID_URL`). Put the API URL
-   in `baseURL` and use `get("/users")`. Without configuration, absolute URLs
+   creating a client disables the whole `venus` facade.
+5. **Closed scopes**: once a `baseURL` is configured, methods only accept
+   relative paths (`venus.get("https://…")` returns `INVALID_URL`). Put the API URL
+   in `baseURL` and use `venus.get("/users")`. Without configuration, absolute URLs
    still work.
-5. **Drop inherited headers per request**: use
+6. **Drop inherited headers per request**: use
    `disableHeaders: ["authorization"]` instead of deleting them manually.
-6. **Unified `progress` callback**: `useXHR`, `onUploadProgress` and
+7. **Unified `progress` callback**: `useXHR`, `onUploadProgress` and
    `onDownloadProgress` were replaced by a single `progress` option; the
    engine and the transfer direction are detected automatically.
-7. **Hooks merge by return value**: `beforeRequest` should return
+8. **Hooks merge by return value**: `beforeRequest` should return
    `{ headers: { ... } }`; the result is merged and headers are combined.
    Mutating the received `options` has no effect.
 
 ```diff
 - import { venusConfig, getRss } from "@braydev/venus";
-+ import { venus, get } from "@braydev/venus";
++ import { venus } from "@braydev/venus";
 
 - venusConfig.setBaseURL("https://api.example.com");
 + venus.config({ baseURL: "https://api.example.com", timeout: 8000 });

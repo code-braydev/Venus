@@ -1,5 +1,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { send, update, get } from "../src/index";
+import { venus } from "../src/index";
+
+const { send, update, get } = venus;
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {

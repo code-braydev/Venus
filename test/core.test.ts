@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { get, venus } from "../src/index";
+import { venus } from "../src/index";
+
+const { get } = venus;
 
 describe("Venus Core & Configuration", () => {
   beforeEach(() => {

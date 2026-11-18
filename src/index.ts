@@ -4,15 +4,11 @@
  * Designed by code-braydev.
  */
 
-// Export core logic and configuration
+// Public types
 export * from "./core/types.js";
-export { venus } from "./utils/config.js";
 
-// Export client mode (multi-clients)
+// Singleton mode: venus.config(), venus.get(), venus.send(), ...
+export { venus } from "./venus.js";
+
+// Client mode (multi-clients): createClient().get(), ...
 export { createClient } from "./methods/instance.js";
-
-// Export primary network methods
-export { get } from "./methods/get.js";
-export { send } from "./methods/send.js";
-export { remove } from "./methods/remove.js";
-export { update, updateOnly } from "./methods/update.js";

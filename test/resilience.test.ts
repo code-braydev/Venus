@@ -1,5 +1,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { get, send, updateOnly } from "../src/index";
+import { venus } from "../src/index";
+
+const { get, send, updateOnly } = venus;
 
 describe("Venus Resilience & Resilience Strategies", () => {
   afterEach(() => {
