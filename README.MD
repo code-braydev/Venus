@@ -6,7 +6,7 @@
 
 ---
 
-### 🚀 New in v3.0.0
+### 🚀 New in v3
 
 - **Declarative Singleton config**: `venus.config({ baseURL, headers, timeout, retry })` in one call.
 - **Multi-client mode**: `createClient({ baseURL, headers, timeout, retry })` for independent, self-contained clients.

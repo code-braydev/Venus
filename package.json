@@ -1,6 +1,6 @@
 {
   "name": "@braydev/venus",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "HTTP, without friction. A modern, zero-dependency HTTP client with declarative config, instances and a hybrid fetch/XHR engine.",
   "type": "module",
   "main": "./dist/index.cjs",

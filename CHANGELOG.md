@@ -2,7 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
-## [3.0.0] - 2026-11-18
+## [3.0.1] - 2026-11-18
+
+> **Note:** `3.0.0` was retracted from npm shortly after its release. `3.0.1` is the first supported release of the v3 line, and the entry below is the complete summary of v3.
+
 
 ### Added:
 
@@ -50,7 +53,7 @@ All notable changes to this project will be documented in this file.
 - **Hook merge semantics**: whatever `beforeRequest` returns is merged into the request (headers combined, `disableHeaders` applied) instead of replacing it wholesale; the hook receives a read-only copy, so mutating `options` has no effect.
 - **Scope-aware request engine**: header/timeout/retry/baseURL resolution was centralized in a config scope layer that serves both singleton and instance modes.
 - **Leaner hot path**: abort plumbing (`AbortController`, listeners) and `Headers` merging are now only allocated when a request actually uses timeouts, signals, headers or bodies — fewer allocations per call without changing behavior.
-- **Package**: version bumped to `3.0.0`, description updated to the official lema.
+- **Package**: version bumped to `3.0.1`, description updated to the official lema.
 
 ### Migration Notes:
 
