@@ -1,5 +1,6 @@
 import { request } from "../core/request.js";
 import { VenusOptions, VenusResponse } from "../core/types.js";
+import { emptyBodyResponse, isEmptyBody, withServerMessage } from "../utils/body.js";
 
 /**
  * Shared logic for update operations to ensure body consistency and detailed error capturing.
@@ -11,44 +12,15 @@ async function performUpdate<T>(
   body: unknown,
   options: VenusOptions = {},
 ): Promise<VenusResponse<T>> {
-  /**
-   * Pre-flight Check:
-   * Ensures the payload is not empty to save bandwidth and prevent the server
-   * from processing invalid update requests.
-   */
-  if (!body || (typeof body === "object" && Object.keys(body).length === 0)) {
-    return {
-      data: null,
-      ok: false,
-      status: 400,
-      errorCode: "INVALID_BODY",
-      error: `Venus: ${method} requires a non-empty body.`,
-    };
+  if (isEmptyBody(body)) {
+    return emptyBodyResponse(`Venus: ${method} requires a non-empty body.`);
   }
 
-  const preparedBody =
-    typeof body === "string" || body instanceof FormData || body instanceof Blob
-      ? body
-      : JSON.stringify(body);
+  const response = await request<T>(path, { ...options, method, body });
 
-  const response = await request<T>(path, {
-    ...options,
-    method,
-    body: preparedBody,
-  });
-
-  if (!response.ok) {
-    const serverMessage =
-      (response.data as { message?: string } | null)?.message || response.error;
-    return {
-      ...response,
-      error: serverMessage
-        ? `Venus: Update failed. ${serverMessage}`
-        : response.error,
-    };
-  }
-
-  return response;
+  return response.ok
+    ? response
+    : withServerMessage(response, (message) => `Venus: Update failed. ${message}`);
 }
 
 /**

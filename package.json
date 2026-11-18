@@ -21,7 +21,10 @@
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts --clean --minify",
     "dev": "tsup src/index.ts --watch --format cjs,esm",
-    "test": "vitest run"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:types": "vitest run --typecheck",
+    "prepublishOnly": "npm run typecheck && npm run test:types && npm run build"
   },
   "devDependencies": {
     "@types/node": "^25.2.0",

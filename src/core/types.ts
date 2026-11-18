@@ -1,19 +1,67 @@
 /**
- * Standard response structure for all Venus operations.
- * @template T - The expected data shape (e.g., User, News, etc.)
+ * Successful response: `ok` narrows `data` to `T`.
+ * 204/205 answers carry `data: null`, so type those calls as `<null>`.
  */
-export type VenusResponse<T> = {
-  /** The parsed JSON data from the server or null if an error occurred. */
-  data: T | null;
-  /** A descriptive error message, either from Venus or the server. */
-  error: string | null;
-  /** Boolean flag indicating if the request was successful (status 200-299). */
-  ok: boolean;
-  /** The HTTP status code returned by the server, when available. */
-  status?: number;
-  /** Stable Venus error code for retry, telemetry and UI decisions. */
-  errorCode: VenusErrorCode | null;
+export type VenusSuccess<T> = {
+  /** The parsed payload (typed as `T`). */
+  data: T;
+  /** Always `true` (status 200-299). */
+  ok: true;
+  /** The HTTP status code returned by the server. */
+  status: number;
+  /** Always `null` on success. */
+  error: null;
+  /** Always `null` on success. */
+  errorCode: null;
+  /** Request metrics; `null` unless `metrics: true` is enabled. */
+  metrics: VenusMetrics | null;
 };
+
+/**
+ * Failed response. `data` is whatever the server returned (error body) or
+ * `null`; it is not `T`.
+ */
+export type VenusFailure = {
+  /** Server error body when one could be parsed, otherwise `null`. */
+  data: unknown;
+  /** Always `false`. */
+  ok: false;
+  /** The HTTP status when available (0 for network/validation failures). */
+  status?: number;
+  /** A descriptive error message, either from Venus or the server. */
+  error: string;
+  /** Stable Venus error code for retry, telemetry and UI decisions. */
+  errorCode: VenusErrorCode;
+  /** Request metrics; `null` unless `metrics: true` is enabled. */
+  metrics: VenusMetrics | null;
+};
+
+/**
+ * Standard response of every Venus operation. Check `ok` to narrow it:
+ *
+ * ```ts
+ * const res = await get<User>("/me");
+ * if (res.ok) res.data.name; // User
+ * else res.errorCode;        // VenusErrorCode
+ * ```
+ * @template T - The expected data shape (e.g., User).
+ */
+export type VenusResponse<T> = VenusSuccess<T> | VenusFailure;
+
+/**
+ * Metrics collected for one logical request (all retry attempts included).
+ * Enabling metrics switches the transport to XMLHttpRequest.
+ */
+export interface VenusMetrics {
+  /** Transport that served the request. */
+  engine: "fetch" | "xhr";
+  /** Epoch milliseconds when the request started. */
+  startedAt: number;
+  /** Total elapsed milliseconds, including retries and backoff. */
+  durationMs: number;
+  /** Number of attempts performed (1 = no retries). */
+  attempts: number;
+}
 
 /**
  * Stable internal error codes returned by Venus.
@@ -25,6 +73,9 @@ export type VenusErrorCode =
   | "NETWORK_ERROR"
   | "JSON_PARSE_ERROR"
   | "INVALID_BODY"
+  | "INVALID_URL"
+  | "MODE_CONFLICT"
+  | "UNSUPPORTED"
   | "RETRY_EXHAUSTED"
   | "UNKNOWN_ERROR";
 
@@ -37,6 +88,7 @@ export type VenusResponseType =
   | "blob"
   | "formData"
   | "arrayBuffer"
+  | "stream"
   | "auto";
 
 type PrimitiveParam = string | number | boolean;
@@ -68,6 +120,12 @@ export interface VenusRetryOptions {
   backoffMs?: number;
   /** Max backoff in milliseconds. */
   maxBackoffMs?: number;
+  /**
+   * HTTP methods allowed to retry. Defaults to the idempotent ones
+   * (GET, HEAD, OPTIONS, PUT, DELETE); add "POST"/"PATCH" only if safe.
+   * Ignored when `shouldRetry` is provided.
+   */
+  retryMethods?: string[];
   /** Status codes considered retryable. */
   retryOn?: number[];
   /** Optional custom retry decision. */
@@ -79,7 +137,7 @@ export interface VenusRetryOptions {
 }
 
 /**
- * Declarative configuration accepted by `venus.config()` and `createInstance()`.
+ * Declarative configuration accepted by `venus.config()` and `createClient()`.
  * Only the provided keys are applied; the rest keep their previous value.
  */
 export interface VenusConfigInput {
@@ -91,6 +149,21 @@ export interface VenusConfigInput {
   timeout?: number;
   /** Default retry policy; can be overridden per request. */
   retry?: boolean | number | VenusRetryOptions;
+  /** Collect `metrics` on every response (switches the transport to XHR). */
+  metrics?: boolean;
+  /**
+   * Scope-wide interceptors. They run before the per-request hooks on every
+   * attempt, so a client can e.g. inject the current auth token.
+   */
+  hooks?: VenusHooks;
+  /** Scope-wide telemetry listener; runs before the per-request one. */
+  onTelemetry?: (event: VenusTelemetryEvent) => void;
+  /**
+   * Hidden legacy switches. Not part of the documented API.
+   * `sync: true` runs a blocking synchronous XMLHttpRequest (text/json only,
+   * no progress, no mid-flight abort).
+   */
+  legacy?: { sync?: boolean };
 }
 
 /**
@@ -107,14 +180,28 @@ export interface VenusTelemetryEvent {
 }
 
 /**
+ * Partial request override returned by `beforeRequest`.
+ * Returned fields are merged into the outgoing request; headers are combined
+ * and `disableHeaders` removes inherited header names.
+ */
+export interface VenusRequestOverride extends RequestInit {
+  /** Header names (case-insensitive) removed from the outgoing request. */
+  disableHeaders?: string[];
+}
+
+/**
  * Request hooks to enable auth, logging, tracing or instrumentation.
  */
 export interface VenusHooks {
+  /**
+   * Runs before each attempt with a read-only copy of the request.
+   * Mutating it has no effect: return a partial override instead.
+   */
   beforeRequest?: (context: {
     url: string;
-    options: RequestInit;
+    options: Readonly<RequestInit>;
     attempt: number;
-  }) => void | RequestInit | Promise<void | RequestInit>;
+  }) => void | VenusRequestOverride | Promise<void | VenusRequestOverride>;
   afterResponse?: (context: {
     url: string;
     options: RequestInit;
@@ -153,9 +240,18 @@ export type VenusProgressCallback = (progress: VenusProgress) => void;
  * Internal configuration for network requests.
  * Extends RequestInit for compatibility with fetch.
  */
-export interface VenusOptions extends RequestInit {
-  /** Optional base URL to avoid repeating full paths in every call. */
-  baseUrl?: string;
+export interface VenusOptions extends Omit<RequestInit, "body"> {
+  /**
+   * Request payload, auto-serialized with its Content-Type:
+   * objects/arrays → JSON, string → text/plain, File/Blob/ArrayBuffer/typed
+   * arrays/ReadableStream → binary, FormData and URLSearchParams → native.
+   * An explicit `Content-Type` header always wins.
+   */
+  body?: unknown;
+  /** Collect `metrics` for this request (switches the transport to XHR). */
+  metrics?: boolean;
+  /** @internal In-flight registry injected by the scope so `abort()` can cancel it. */
+  registry?: Set<AbortController>;
   /** Desired parser for response body; auto uses headers/content sniffing. */
   responseType?: VenusResponseType;
   /** Request timeout in milliseconds. */
@@ -168,6 +264,11 @@ export interface VenusOptions extends RequestInit {
   retry?: boolean | number | VenusRetryOptions;
   /** Lightweight request/response hooks. */
   hooks?: VenusHooks;
+  /**
+   * Header names (case-insensitive) removed from the outgoing request.
+   * Useful to opt out of a header inherited from the singleton/instance scope.
+   */
+  disableHeaders?: string[];
   /** Optional telemetry callback. */
   onTelemetry?: (event: VenusTelemetryEvent) => void;
   /**
@@ -189,17 +290,17 @@ export interface VenusOptions extends RequestInit {
   progress?: VenusProgressCallback;
   /**
    * @internal
-   * Instance-level defaults injected by `createInstance()`.
+   * Instance-level defaults injected by `createClient()`.
    * When present, the global singleton config is ignored.
    */
   defaults?: VenusConfigInput;
 }
 
 /**
- * Independent Venus client created by `createInstance()`.
+ * Independent Venus client created by `createClient()`.
  * Each instance keeps its own defaults and never reads the global singleton config.
  */
-export interface VenusInstance {
+export interface VenusClient {
   /** Performs a GET request with the instance defaults applied. */
   get<T>(path: string, options?: VenusOptions): Promise<VenusResponse<T>>;
   /** Performs a POST request with the instance defaults applied. */
@@ -222,8 +323,10 @@ export interface VenusInstance {
   ): Promise<VenusResponse<T>>;
   /** Performs a DELETE request with the instance defaults applied. */
   remove<T>(path: string, options?: VenusOptions): Promise<VenusResponse<T>>;
-  /** Merges new values into the instance defaults. */
-  config(options: VenusConfigInput): void;
+  /** Returns a copy of the immutable client defaults. */
+  config(): VenusConfigInput;
+  /** Aborts every in-flight request of this client (they resolve as `ABORTED`). */
+  abort(): void;
 }
 
 /**

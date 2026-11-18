@@ -2,7 +2,8 @@ import { get } from "./get.js";
 import { send } from "./send.js";
 import { remove } from "./remove.js";
 import { update, updateOnly } from "./update.js";
-import type { VenusConfigInput, VenusInstance, VenusOptions } from "../core/types.js";
+import { abortAll, claimInstanceMode } from "../utils/config.js";
+import type { VenusConfigInput, VenusClient, VenusOptions } from "../core/types.js";
 
 /** Keeps instance base URLs clean (no trailing slash) for predictable joins. */
 function normalizeConfig(config: VenusConfigInput): VenusConfigInput {
@@ -16,9 +17,9 @@ function normalizeConfig(config: VenusConfigInput): VenusConfigInput {
  * Creates an independent Venus client with its own defaults.
  *
  * ```ts
- * import { createInstance } from "@braydev/venus";
+ * import { createClient } from "@braydev/venus";
  *
- * const api = createInstance({
+ * const api = createClient({
  *   baseURL: "https://api.example.com",
  *   headers: { Authorization: "Bearer token" },
  *   timeout: 8000,
@@ -27,17 +28,22 @@ function normalizeConfig(config: VenusConfigInput): VenusConfigInput {
  * const { data } = await api.get<User>("/profile");
  * ```
  *
- * Instances never read the global singleton config (`venus.config`),
- * and per-request options always override the instance defaults.
+ * Clients are immutable: `config({ ... })` is not available, only the
+ * read-only `config()` getter plus `abort()` to cancel in-flight requests. Creating a client locks Venus into
+ * instance mode, so the singleton `venus` facade becomes unavailable.
  *
- * @param defaults - Initial defaults for the instance (baseURL, headers, timeout, retry).
+ * @param defaults - Initial defaults for the client (baseURL, headers, timeout, retry, metrics).
  */
-export function createInstance(defaults: VenusConfigInput = {}): VenusInstance {
-  let config: VenusConfigInput = normalizeConfig(defaults);
+export function createClient(defaults: VenusConfigInput = {}): VenusClient {
+  claimInstanceMode();
+
+  const config = normalizeConfig(defaults);
+  const registry = new Set<AbortController>();
 
   const withDefaults = (options: VenusOptions): VenusOptions => ({
     ...options,
     defaults: config,
+    registry,
   });
 
   return {
@@ -51,8 +57,19 @@ export function createInstance(defaults: VenusConfigInput = {}): VenusInstance {
       updateOnly<T>(path, body, withDefaults(options)),
     remove: <T,>(path: string, options: VenusOptions = {}) =>
       remove<T>(path, withDefaults(options)),
-    config: (options: VenusConfigInput = {}) => {
-      config = normalizeConfig({ ...config, ...options });
-    },
+    config: () => ({
+      baseURL: config.baseURL,
+      headers: config.headers ? { ...config.headers } : undefined,
+      timeout: config.timeout,
+      retry:
+        typeof config.retry === "object" && config.retry !== null
+          ? { ...config.retry }
+          : config.retry,
+      metrics: config.metrics,
+      hooks: config.hooks ? { ...config.hooks } : undefined,
+      onTelemetry: config.onTelemetry,
+      legacy: config.legacy ? { ...config.legacy } : undefined,
+    }),
+    abort: () => abortAll(registry),
   };
 }

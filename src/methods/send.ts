@@ -1,11 +1,12 @@
 import { request } from "../core/request.js";
 import { VenusOptions, VenusResponse } from "../core/types.js";
+import { emptyBodyResponse, isEmptyBody, withServerMessage } from "../utils/body.js";
 
 /**
- * Performs a POST request with payload validation and detailed server feedback.
- * Includes a pre-flight check to prevent unnecessary network overhead for empty bodies.
- * * @param path - The target endpoint or absolute URL.
- * @param body - The data payload to be serialized and sent.
+ * Performs a POST request. Empty payloads are rejected before any network call;
+ * the body is auto-serialized with its Content-Type (see `VenusOptions.body`).
+ * @param path - The endpoint (relative when a baseURL is configured).
+ * @param body - The data payload to be sent.
  * @param options - Unified Venus options (headers, timeout, signal, params, parser, retry, hooks).
  */
 export const send = async <T>(
@@ -13,40 +14,13 @@ export const send = async <T>(
   body: unknown,
   options: VenusOptions = {},
 ): Promise<VenusResponse<T>> => {
-  /**
-   * Pre-fetch Validation:
-   * Prevents sending requests with null or empty objects, saving client-side
-   * resources and avoiding predictable 400 Bad Request responses from the server.
-   */
-  if (!body || (typeof body === "object" && Object.keys(body).length === 0)) {
-    return {
-      data: null,
-      ok: false,
-      status: 400,
-      errorCode: "INVALID_BODY",
-      error: "Venus: Cannot send an empty body.",
-    };
+  if (isEmptyBody(body)) {
+    return emptyBodyResponse("Venus: Cannot send an empty body.");
   }
 
-  const preparedBody =
-    typeof body === "string" || body instanceof FormData || body instanceof Blob
-      ? body
-      : JSON.stringify(body);
+  const response = await request<T>(path, { ...options, method: "POST", body });
 
-  const response = await request<T>(path, {
-    ...options,
-    method: "POST",
-    body: preparedBody,
-  });
-
-  if (!response.ok) {
-    const serverMessage =
-      (response.data as { message?: string } | null)?.message || response.error;
-    return {
-      ...response,
-      error: serverMessage ? `Venus: ${serverMessage}` : response.error,
-    };
-  }
-
-  return response;
+  return response.ok
+    ? response
+    : withServerMessage(response, (message) => `Venus: ${message}`);
 };

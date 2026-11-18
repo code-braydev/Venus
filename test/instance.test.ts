@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { createInstance, venus, get, send } from "../src/index";
+import { createClient, get, venus } from "../src/index";
 
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -7,118 +7,13 @@ const jsonResponse = (body: unknown, status = 200) =>
     headers: { "content-type": "application/json" },
   });
 
-describe("venus.config (Singleton mode)", () => {
+describe("createClient (Multi mode)", () => {
   afterEach(() => {
-    venus.reset();
-    vi.restoreAllMocks();
-  });
-
-  it("should apply baseURL, headers, timeout and retry declaratively", async () => {
-    venus.config({
-      baseURL: "https://api.example.com/",
-      headers: { Authorization: "Bearer global-token" },
-      timeout: 5000,
-      retry: 2,
-    });
-
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      jsonResponse({ ok: true }),
-    );
-
-    await get("/users");
-
-    expect(String(fetchSpy.mock.calls[0][0])).toBe(
-      "https://api.example.com/users",
-    );
-    const headers = (fetchSpy.mock.calls[0][1] as RequestInit).headers as Headers;
-    expect(headers.get("authorization")).toBe("Bearer global-token");
-    expect(venus.config().timeout).toBe(5000);
-    expect(venus.config().retry).toBe(2);
-  });
-
-  it("should let per-request options override global defaults", async () => {
-    venus.config({
-      baseURL: "https://global.example.com",
-      headers: { "X-Global": "yes" },
-    });
-
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      jsonResponse({ ok: true }),
-    );
-
-    await get("/path", {
-      baseUrl: "https://override.example.com",
-      headers: { "X-Global": "no" },
-    });
-
-    const url = String(fetchSpy.mock.calls[0][0]);
-    const headers = (fetchSpy.mock.calls[0][1] as RequestInit).headers as Headers;
-    expect(url.startsWith("https://override.example.com/path")).toBe(true);
-    expect(headers.get("x-global")).toBe("no");
-  });
-
-  it("should apply the global timeout to requests", async () => {
-    venus.config({ timeout: 15 });
-
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      async (_url, init) =>
-        new Promise<Response>((_resolve, reject) => {
-          init?.signal?.addEventListener(
-            "abort",
-            () => reject(new DOMException("Aborted", "AbortError")),
-            { once: true },
-          );
-        }),
-    );
-
-    const res = await get("https://api.example.com/slow");
-
-    expect(res.ok).toBe(false);
-    expect(res.errorCode).toBe("TIMEOUT");
-    expect(res.status).toBe(408);
-  });
-
-  it("should apply the global retry policy until exhausted", async () => {
-    venus.config({ retry: 1 });
-
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response("Service Unavailable", { status: 503 }),
-    );
-
-    const res = await get("https://api.example.com/flaky");
-
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-    expect(res.ok).toBe(false);
-    expect(res.errorCode).toBe("RETRY_EXHAUSTED");
-    expect(res.status).toBe(503);
-  });
-
-  it("should clear everything with venus.reset()", () => {
-    venus.config({
-      baseURL: "https://api.example.com",
-      headers: { Authorization: "x" },
-      timeout: 1000,
-      retry: true,
-    });
-
-    venus.reset();
-
-    const current = venus.config();
-    expect(current.baseURL).toBe("");
-    expect(current.headers).toEqual({});
-    expect(current.timeout).toBeUndefined();
-    expect(current.retry).toBeUndefined();
-  });
-});
-
-describe("createInstance (Multi mode)", () => {
-  afterEach(() => {
-    venus.reset();
     vi.restoreAllMocks();
   });
 
   it("should use instance baseURL and headers", async () => {
-    const api = createInstance({
+    const api = createClient({
       baseURL: "https://api.a.com/",
       headers: { "X-Api-Key": "a-key" },
       timeout: 3000,
@@ -136,33 +31,8 @@ describe("createInstance (Multi mode)", () => {
     expect(headers.get("x-api-key")).toBe("a-key");
   });
 
-  it("should stay isolated from the global singleton config", async () => {
-    venus.config({
-      baseURL: "https://global.example.com",
-      headers: { "X-Global": "global-token" },
-    });
-
-    const api = createInstance({
-      baseURL: "https://instance.example.com",
-      headers: { "X-Instance": "instance-token" },
-    });
-
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      jsonResponse({ ok: true }),
-    );
-
-    await api.get("/profile");
-
-    const url = String(fetchSpy.mock.calls[0][0]);
-    const headers = (fetchSpy.mock.calls[0][1] as RequestInit).headers as Headers;
-
-    expect(url.startsWith("https://instance.example.com/profile")).toBe(true);
-    expect(headers.get("x-instance")).toBe("instance-token");
-    expect(headers.get("x-global")).toBeNull();
-  });
-
-  it("should let per-request options override instance defaults", async () => {
-    const api = createInstance({
+  it("should let per-request headers override instance defaults", async () => {
+    const api = createClient({
       baseURL: "https://instance.example.com",
       headers: { Authorization: "Bearer instance" },
     });
@@ -173,33 +43,137 @@ describe("createInstance (Multi mode)", () => {
 
     await api.get("/secure", {
       headers: { Authorization: "Bearer request" },
-      baseUrl: "https://request.example.com",
     });
 
     const url = String(fetchSpy.mock.calls[0][0]);
     const headers = (fetchSpy.mock.calls[0][1] as RequestInit).headers as Headers;
-    expect(url.startsWith("https://request.example.com/secure")).toBe(true);
+    expect(url).toBe("https://instance.example.com/secure");
     expect(headers.get("authorization")).toBe("Bearer request");
   });
 
-  it("should merge new defaults via instance.config()", async () => {
-    const api = createInstance({ baseURL: "https://a.example.com" });
-    api.config({ baseURL: "https://b.example.com", headers: { "X-Layer": "2" } });
+  it("should remove an inherited header with disableHeaders", async () => {
+    const api = createClient({
+      baseURL: "https://instance.example.com",
+      headers: { Authorization: "Bearer instance", "X-App": "web" },
+    });
 
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({ ok: true }),
     );
 
-    await api.get("/ping");
+    await api.get("/public", { disableHeaders: ["authorization"] });
 
-    const url = String(fetchSpy.mock.calls[0][0]);
     const headers = (fetchSpy.mock.calls[0][1] as RequestInit).headers as Headers;
-    expect(url.startsWith("https://b.example.com/ping")).toBe(true);
-    expect(headers.get("x-layer")).toBe("2");
+    expect(headers.get("authorization")).toBeNull();
+    expect(headers.get("x-app")).toBe("web");
+  });
+
+  it("should expose the immutable defaults via config()", () => {
+    const api = createClient({
+      baseURL: "https://a.example.com/",
+      headers: { "X-A": "1" },
+      timeout: 1000,
+      retry: 2,
+    });
+
+    const snapshot = api.config();
+    expect(snapshot.baseURL).toBe("https://a.example.com");
+    expect(snapshot.headers).toEqual({ "X-A": "1" });
+    expect(snapshot.timeout).toBe(1000);
+    expect(snapshot.retry).toBe(2);
+
+    snapshot.headers!["X-A"] = "mutated";
+    expect(api.config().headers).toEqual({ "X-A": "1" });
+  });
+
+  it("should reject absolute URLs in instance methods", async () => {
+    const api = createClient({ baseURL: "https://api.example.com" });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    const res = await api.get("https://other.example.com/path");
+
+    expect(res.ok).toBe(false);
+    expect(res.status).toBe(0);
+    expect(res.errorCode).toBe("INVALID_URL");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("should block standalone requests in instance mode", async () => {
+    createClient({ baseURL: "https://api.example.com" });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    const res = await get("/standalone");
+
+    expect(res.ok).toBe(false);
+    expect(res.status).toBe(0);
+    expect(res.errorCode).toBe("MODE_CONFLICT");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("should block the singleton facade in instance mode", () => {
+    createClient({ baseURL: "https://api.example.com" });
+
+    expect(() => venus.config({ baseURL: "https://other.example.com" })).toThrow(
+      /singleton API is disabled/i,
+    );
+    expect(() => venus.reset()).toThrow(/singleton API is disabled/i);
+  });
+
+  it("should merge a partial beforeRequest result", async () => {
+    const api = createClient({
+      baseURL: "https://api.example.com",
+      headers: { "X-Instance": "1" },
+    });
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({ ok: true }, 201),
+    );
+
+    const res = await api.send(
+      "/items",
+      { name: "x" },
+      {
+        hooks: {
+          beforeRequest: () => ({ headers: { "X-Partial": "yes" } }),
+        },
+      },
+    );
+
+    expect(res.ok).toBe(true);
+
+    const init = fetchSpy.mock.calls[0][1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ name: "x" }));
+    const headers = init.headers as Headers;
+    expect(headers.get("x-partial")).toBe("yes");
+    expect(headers.get("x-instance")).toBe("1");
+  });
+
+  it("should ignore mutations to the hook options copy", async () => {
+    const api = createClient({
+      baseURL: "https://api.example.com",
+      headers: { "X-Instance": "1" },
+    });
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({ ok: true }),
+    );
+
+    await api.get("/safe", {
+      hooks: {
+        beforeRequest: ({ options }) => {
+          (options.headers as Headers).set("X-Hacked", "1");
+        },
+      },
+    });
+
+    const headers = (fetchSpy.mock.calls[0][1] as RequestInit).headers as Headers;
+    expect(headers.get("x-hacked")).toBeNull();
+    expect(headers.get("x-instance")).toBe("1");
   });
 
   it("should expose every HTTP method with the shared response contract", async () => {
-    const api = createInstance({ baseURL: "https://api.example.com" });
+    const api = createClient({ baseURL: "https://api.example.com" });
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
       async (_url, init) => jsonResponse({ method: init?.method }, 201),
     );
@@ -227,7 +201,7 @@ describe("createInstance (Multi mode)", () => {
   });
 
   it("should still block empty bodies in send()", async () => {
-    const api = createInstance({ baseURL: "https://api.example.com" });
+    const api = createClient({ baseURL: "https://api.example.com" });
     vi.spyOn(globalThis, "fetch");
 
     const res = await api.send("/item", {});
@@ -239,7 +213,7 @@ describe("createInstance (Multi mode)", () => {
   });
 
   it("should apply the instance timeout", async () => {
-    const api = createInstance({ baseURL: "https://api.example.com", timeout: 15 });
+    const api = createClient({ baseURL: "https://api.example.com", timeout: 15 });
 
     vi.spyOn(globalThis, "fetch").mockImplementation(
       async (_url, init) =>
@@ -258,35 +232,56 @@ describe("createInstance (Multi mode)", () => {
     expect(res.errorCode).toBe("TIMEOUT");
     expect(res.status).toBe(408);
   });
+});
 
-  it("should not leak instance config into standalone singleton requests", async () => {
-    const api = createInstance({ baseURL: "https://instance.example.com" });
+describe("scope-wide hooks and telemetry (client)", () => {
+  afterEach(() => vi.restoreAllMocks());
 
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      jsonResponse({ ok: true }),
-    );
+  it("runs client hooks before request hooks on every attempt and merges headers", async () => {
+    const calls: string[] = [];
+    const api = createClient({
+      baseURL: "https://api.example.com",
+      hooks: {
+        beforeRequest: ({ attempt }) => {
+          calls.push(`scope:${attempt}`);
+          return { headers: { Authorization: `Bearer t${attempt}` } };
+        },
+      },
+    });
 
-    await api.get("/a");
-    await get("/b");
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementationOnce(async () => jsonResponse({}, 503))
+      .mockImplementation(async () => jsonResponse({ ok: true }));
 
-    expect(String(fetchSpy.mock.calls[0][0])).toBe(
-      "https://instance.example.com/a",
-    );
-    expect(String(fetchSpy.mock.calls[1][0])).toBe("/b");
-  });
-
-  it("should keep standalone send working with global config", async () => {
-    venus.config({ baseURL: "https://global.example.com" });
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      jsonResponse({ created: true }, 201),
-    );
-
-    const res = await send("/items", { name: "venus" });
+    const res = await api.get("/x", {
+      retry: { attempts: 1, backoffMs: 1 },
+      hooks: {
+        beforeRequest: ({ attempt }) => {
+          calls.push(`request:${attempt}`);
+          return { headers: { "X-Req": "1" } };
+        },
+      },
+    });
 
     expect(res.ok).toBe(true);
-    expect(res.status).toBe(201);
-    expect(String(fetchSpy.mock.calls[0][0])).toBe(
-      "https://global.example.com/items",
-    );
+    expect(calls).toEqual(["scope:0", "request:0", "scope:1", "request:1"]);
+    const headers = new Headers((fetchSpy.mock.calls[1][1] as RequestInit).headers);
+    expect(headers.get("authorization")).toBe("Bearer t1");
+    expect(headers.get("x-req")).toBe("1");
+  });
+
+  it("calls client and request telemetry listeners and exposes them in config()", async () => {
+    const seen: string[] = [];
+    const api = createClient({
+      baseURL: "https://api.example.com",
+      onTelemetry: () => seen.push("scope"),
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => jsonResponse({}));
+
+    await api.get("/x", { onTelemetry: () => seen.push("request") });
+
+    expect(seen).toEqual(["scope", "request"]);
+    expect(typeof api.config().onTelemetry).toBe("function");
   });
 });

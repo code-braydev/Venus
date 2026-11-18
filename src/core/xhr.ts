@@ -11,6 +11,8 @@ export interface XhrTransportOptions {
   progress?: VenusProgressCallback;
   /** Transfer direction detected by the engine (body -> upload, else download). */
   direction: "upload" | "download";
+  /** Hidden legacy mode: blocking synchronous XHR (text/json only). */
+  sync?: boolean;
 }
 
 /**
@@ -69,6 +71,18 @@ function toProgress(
   };
 }
 
+/** A throwing progress callback must never break the transfer. */
+function notifyProgress(
+  callback: VenusProgressCallback | undefined,
+  progress: VenusProgress,
+): void {
+  try {
+    callback?.(progress);
+  } catch {
+    // ignored on purpose
+  }
+}
+
 function parseResponseHeaders(xhr: XMLHttpRequest): Headers {
   const headers = new Headers();
   const raw = xhr.getAllResponseHeaders();
@@ -119,7 +133,7 @@ export function xhrRequest(
       return;
     }
 
-    xhr.open(method, url, true);
+    xhr.open(method, url, !options.sync);
 
     const headers = new Headers(init.headers ?? undefined);
     headers.forEach((value, key) => {
@@ -134,7 +148,10 @@ export function xhrRequest(
       xhr.withCredentials = true;
     }
 
-    const responseType = xhrResponseTypeFor(options.responseType);
+    // Synchronous XHR forbids setting `responseType`; it reads text only.
+    const responseType = options.sync
+      ? ""
+      : xhrResponseTypeFor(options.responseType);
     if (responseType) {
       xhr.responseType = responseType;
     }
@@ -149,7 +166,7 @@ export function xhrRequest(
       signal.addEventListener("abort", onAbortSignal, { once: true });
     }
 
-    xhr.onload = () => {
+    const finish = () => {
       cleanup();
 
       try {
@@ -174,6 +191,8 @@ export function xhrRequest(
       }
     };
 
+    xhr.onload = finish;
+
     xhr.onerror = () => {
       cleanup();
       reject(new Error("Network request failed."));
@@ -197,16 +216,19 @@ export function xhrRequest(
 
     if (options.progress && isUpload && xhr.upload) {
       xhr.upload.onprogress = (event) =>
-        options.progress?.(toProgress(event, "upload"));
+        notifyProgress(options.progress, toProgress(event, "upload"));
     }
 
     if (options.progress && !isUpload) {
       xhr.onprogress = (event) =>
-        options.progress?.(toProgress(event, "download"));
+        notifyProgress(options.progress, toProgress(event, "download"));
     }
 
     try {
       xhr.send(method === "GET" || method === "HEAD" ? null : body);
+      if (options.sync) {
+        finish();
+      }
     } catch (err) {
       cleanup();
       reject(err);

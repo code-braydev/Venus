@@ -14,7 +14,7 @@ describe("Venus Methods (Fully Mocked)", () => {
       }),
     );
 
-    const { ok, data, status, errorCode } = await get<{ id: number; name: string }>("https://api.example.com/item/1");
+    const { ok, data, status, errorCode } = await get<{ id: number; name: string }>("/item/1");
     expect(ok).toBe(true);
     expect(status).toBe(200);
     expect(data?.name).toBe("Venus");
@@ -29,7 +29,7 @@ describe("Venus Methods (Fully Mocked)", () => {
       }),
     );
 
-    const { ok, status, errorCode, error, data } = await get("https://api.example.com/missing");
+    const { ok, status, errorCode, error, data } = await get("/missing");
     expect(ok).toBe(false);
     expect(status).toBe(404);
     expect(errorCode).toBe("HTTP_ERROR");
@@ -46,7 +46,7 @@ describe("Venus Methods (Fully Mocked)", () => {
     );
 
     const payload = { title: "New" };
-    const { ok, data, status } = await send<any>("https://api.example.com/posts", payload);
+    const { ok, data, status } = await send<any>("/posts", payload);
 
     expect(ok).toBe(true);
     expect(status).toBe(201);
@@ -58,7 +58,7 @@ describe("Venus Methods (Fully Mocked)", () => {
   });
 
   it("SEND: should block empty body", async () => {
-    const { ok, status, error } = await send("https://api.example.com/posts", {});
+    const { ok, status, error } = await send("/posts", {});
     expect(ok).toBe(false);
     expect(status).toBe(400);
     expect(error).toContain("empty body");
@@ -73,7 +73,7 @@ describe("Venus Methods (Fully Mocked)", () => {
     );
 
     const payload = { title: "Updated" };
-    const { ok, data } = await update<any>("https://api.example.com/posts/1", payload);
+    const { ok, data } = await update<any>("/posts/1", payload);
 
     expect(ok).toBe(true);
     expect(data.title).toBe("Updated");
@@ -89,7 +89,7 @@ describe("Venus Methods (Fully Mocked)", () => {
     );
 
     const payload = { title: "Patched" };
-    const { ok, data } = await updateOnly<any>("https://api.example.com/posts/1", payload);
+    const { ok, data } = await updateOnly<any>("/posts/1", payload);
 
     expect(ok).toBe(true);
     expect(data.title).toBe("Patched");
@@ -103,7 +103,7 @@ describe("Venus Methods (Fully Mocked)", () => {
       }),
     );
 
-    const { ok, status, data } = await remove("https://api.example.com/posts/1");
+    const { ok, status, data } = await remove("/posts/1");
 
     expect(ok).toBe(true);
     expect(status).toBe(204);

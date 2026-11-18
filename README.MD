@@ -9,8 +9,13 @@
 ### 🚀 New in v3.0.0
 
 - **Declarative Singleton config**: `venus.config({ baseURL, headers, timeout, retry })` in one call.
-- **Multi-instance mode**: `createInstance({ baseURL, headers, timeout, retry })` for independent, self-contained clients.
-- **Hybrid engine (`fetch` + `XMLHttpRequest`)**: `fetch` by default; transparent switch to XHR when you need detailed metrics and upload/download progress.
+- **Multi-client mode**: `createClient({ baseURL, headers, timeout, retry })` for independent, self-contained clients.
+- **Hybrid engine (`fetch` + `XMLHttpRequest`)**: `fetch` by default; transparent switch to XHR when you enable `metrics` or a `progress` callback.
+- **Auto-serialized bodies**: objects/arrays, text, `FormData`, `URLSearchParams`, `File`/`Blob`/`ArrayBuffer` and `ReadableStream` are detected and sent with the right `Content-Type`. No manual headers.
+- **`abort()`**: `venus.abort()` / `client.abort()` cancel every in-flight request of that scope.
+- **Narrowed responses**: check `ok` and `data` becomes `T`.
+- **Scope-wide `hooks` / `onTelemetry`**: interceptors in `venus.config` and `createClient`.
+- **Safe retries**: only idempotent methods retry by default.
 - **Zero dependencies**: all RSS/Atom support (`getRss`, `fast-xml-parser`) was removed from the core. Venus is a pure HTTP/HTTPS client — no feed code, no parser, nothing extra.
 
 ---
@@ -51,7 +56,16 @@ venus.config({
 ```
 
 Only the keys you provide are merged; the rest keep their previous values.
-Per-request options always override the global defaults.
+Per-request options always override the global defaults — **except the URL**:
+singleton mode is meant for **one API**. Once a `baseURL` is configured the
+scope is **closed**: methods only accept relative paths (`get("/users")`) and
+absolute URLs return `INVALID_URL`. With **no configuration at all**, absolute
+URLs pass straight through (`get("https://api.example.com/users")`). If you
+need another API, use `createClient()`.
+
+> **Modes are exclusive.** Choose singleton **or** instances. Once a client is
+> created with `createClient()`, the `venus` facade and the standalone
+> `get/send/...` functions are disabled and return `MODE_CONFLICT`.
 
 ```ts
 const current = venus.config(); // read back the active configuration
@@ -66,22 +80,29 @@ Create as many isolated clients as you need — perfect for micro-frontends,
 multiple APIs or per-service boundaries:
 
 ```ts
-import { createInstance } from "@braydev/venus";
+import { createClient } from "@braydev/venus";
 
-export const api = createInstance({
+export const api = createClient({
   baseURL: "https://api.example.com",
   headers: { Authorization: "Bearer token" },
   timeout: 8000,
 });
 
-export const uploads = createInstance({
+export const uploads = createClient({
   baseURL: "https://cdn.example.com",
   timeout: 30_000,
 });
+
+api.config(); // { baseURL, headers, timeout, retry } — read-only snapshot
 ```
 
-> Instances **never** read the global singleton config and never leak their
-> own defaults into it: scope precedence is `per-request > instance > nothing`.
+> - Instances are **immutable**: configure them once with `createClient()`
+>   and read them back with `api.config()` (no setter, no `reset()`).
+> - Instances **never** read the global singleton config and never leak their
+>   own defaults into it: scope precedence is `per-request > instance > nothing`.
+> - Creating an instance locks Venus into **instance mode**: `venus.config()`,
+>   `venus.reset()` and standalone `get/send/...` throw or return
+>   `MODE_CONFLICT`.
 
 ### 3. Make your first request
 
@@ -123,17 +144,43 @@ const { data } = await api.get<User>("/profile");
 | `update`     | `update<T>(path, body, options?)`     | Replace resources entirely (PUT).                 |
 | `updateOnly` | `updateOnly<T>(path, body, options?)` | Update resources partially (PATCH).               |
 | `remove`     | `remove<T>(path, options?)`           | Delete resources with 204 handling.               |
+| `abort`      | `venus.abort()` / `client.abort()`    | Cancel every in-flight request of that scope.     |
 
-Every method is also available on instances created with `createInstance()`.
+Every method is also available on instances created with `createClient()`.
 
 ### Response Contract
 
+Check `ok` and TypeScript narrows the response for you:
+
 ```ts
-type VenusResponse<T> = {
-  data: T | null;
-  ok: boolean;
-  error: string | null;
+const res = await get<User>("/me");
+
+if (res.ok) {
+  res.data.name; // User — typed, no null check needed
+} else {
+  res.errorCode; // VenusErrorCode
+  res.data;      // unknown: the server's error body, if any
+}
+```
+
+```ts
+type VenusResponse<T> = VenusSuccess<T> | VenusFailure;
+
+type VenusSuccess<T> = {
+  ok: true;
+  data: T;
+  status: number;
+  error: null;
+  errorCode: null;
+  metrics: VenusMetrics | null; // null unless `metrics: true`
+};
+
+type VenusFailure = {
+  ok: false;
+  data: unknown;
   status?: number;
+  error: string;
+  metrics: VenusMetrics | null;
   errorCode:
     | "HTTP_ERROR"
     | "TIMEOUT"
@@ -141,9 +188,23 @@ type VenusResponse<T> = {
     | "NETWORK_ERROR"
     | "JSON_PARSE_ERROR"
     | "INVALID_BODY"
+    | "INVALID_URL"
+    | "MODE_CONFLICT"
+    | "UNSUPPORTED"
     | "RETRY_EXHAUSTED"
-    | "UNKNOWN_ERROR"
-    | null;
+    | "UNKNOWN_ERROR";
+};
+```
+
+A `204 No Content` answer is a success with `data: null`: type it as
+`remove<null>("/users/1")`.
+
+```ts
+type VenusMetrics = {
+  engine: "fetch" | "xhr";
+  startedAt: number;   // epoch ms
+  durationMs: number;  // total, retries included
+  attempts: number;    // 1 = no retries
 };
 ```
 
@@ -154,15 +215,21 @@ normalized into the exact same shape.
 
 ## ⚙️ Options
 
+With a `baseURL` configured (`venus.config` or `createClient`) paths must be
+**relative** (`get("/users")`); absolute paths return `INVALID_URL`. Without
+configuration, absolute URLs are allowed.
+
 ```ts
 {
   headers?: HeadersInit;
-  baseUrl?: string;
+  disableHeaders?: string[]; // case-insensitive names removed from the request
   timeout?: number;
   signal?: AbortSignal;
   params?: Record<string, unknown>;
   paramsArrayFormat?: "repeat" | "comma" | "brackets" | "indices";
-  responseType?: "auto" | "json" | "text" | "blob" | "formData" | "arrayBuffer";
+  body?: unknown; // auto-serialized, see "Request bodies"
+  responseType?: "auto" | "json" | "text" | "blob" | "formData" | "arrayBuffer" | "stream";
+  metrics?: boolean; // fills `response.metrics` (switches to XHR)
   retry?: boolean | number | {
     attempts?: number;
     backoffMs?: number;
@@ -171,6 +238,7 @@ normalized into the exact same shape.
     shouldRetry?: (ctx) => boolean;
   };
   hooks?: {
+    // Returned fields are merged; headers are combined (no mutation needed).
     beforeRequest?: (ctx) => void | RequestInit | Promise<void | RequestInit>;
     afterResponse?: (ctx) => void | Promise<void>;
   };
@@ -180,6 +248,47 @@ normalized into the exact same shape.
   progress?: (progress: VenusProgress) => void;
 }
 ```
+
+### Request bodies
+
+Venus detects the payload and sets the `Content-Type` for you. An explicit
+`Content-Type` header always wins.
+
+| Body                                  | Sent as                                   |
+| :------------------------------------ | :---------------------------------------- |
+| object / array                        | JSON, `application/json`                  |
+| `string`                              | `text/plain;charset=UTF-8`                |
+| `FormData`                            | multipart (runtime sets the boundary)     |
+| `URLSearchParams`                     | `application/x-www-form-urlencoded`       |
+| `File` / `Blob`                       | its own `type`, else `application/octet-stream` |
+| `ArrayBuffer` / typed arrays          | `application/octet-stream`                |
+| `ReadableStream`                      | `application/octet-stream` (never retried) |
+
+Empty payloads (`null`, `""`, `{}`, `[]`) return `INVALID_BODY` without
+touching the network. `responseType: "stream"` returns `response.body` as a
+`ReadableStream` (fetch engine only).
+
+### Aborting
+
+```ts
+const controller = new AbortController();
+get("/slow", { signal: controller.signal }); // one request
+controller.abort();
+
+venus.abort();  // every in-flight singleton request
+api.abort();    // every in-flight request of that client
+```
+
+Aborted requests resolve as `{ errorCode: "ABORTED", status: 499 }`.
+
+### Dropping an inherited header
+
+```ts
+await get("/public", { disableHeaders: ["authorization", "x-app"] });
+```
+
+Only that request is affected; the singleton/instance headers stay intact for
+the next calls.
 
 ---
 
@@ -230,6 +339,11 @@ type VenusProgress = {
 Timeouts, `AbortSignal`, hooks, telemetry and retries behave identically on
 both engines.
 
+> **Node / SSR:** `XMLHttpRequest` does not exist there. `metrics: true` keeps
+> working (it falls back to `fetch` and reports `engine: "fetch"`), while
+> `progress` resolves as `{ errorCode: "UNSUPPORTED" }` instead of failing
+> with a misleading network error.
+
 ---
 
 ## 🛡️ Resilience
@@ -242,13 +356,12 @@ const res = await get("/flaky", {
     backoffMs: 200,
     maxBackoffMs: 2000,
     retryOn: [408, 429, 500, 502, 503, 504],
+    retryMethods: ["GET", "HEAD", "OPTIONS", "PUT", "DELETE"], // the default
   },
   hooks: {
-    beforeRequest: ({ options }) => {
-      const headers = new Headers(options.headers);
-      headers.set("X-Trace-Id", crypto.randomUUID());
-      return { ...options, headers };
-    },
+    beforeRequest: () => ({
+      headers: { "X-Trace-Id": crypto.randomUUID() },
+    }),
     afterResponse: ({ response, durationMs }) => {
       console.log(response.status, durationMs);
     },
@@ -257,12 +370,45 @@ const res = await get("/flaky", {
 });
 ```
 
+- **Safe retries**: only idempotent methods (GET, HEAD, OPTIONS, PUT, DELETE)
+  are retried. `POST` and `PATCH` are **not**, so a retry can never duplicate
+  an order or a payment. Opt in with `retryMethods: ["POST"]` or take full
+  control with `shouldRetry`.
+- **Backoff** is exponential with jitter. A server `Retry-After` header (seconds
+  or HTTP date) replaces it, capped at `maxBackoffMs`.
+- **Hooks never break the contract**: a throwing `beforeRequest` or
+  `afterResponse` resolves as `{ errorCode: "UNKNOWN_ERROR" }`; errors thrown
+  by `onTelemetry`, `progress` or `shouldRetry` are ignored.
 - **Timeouts** resolve as `{ errorCode: "TIMEOUT", status: 408 }`.
 - **Aborted requests** resolve as `{ errorCode: "ABORTED", status: 499 }`.
 - **Exhausted retries** resolve as `{ errorCode: "RETRY_EXHAUSTED" }`.
 - **Network failures** resolve as `{ errorCode: "NETWORK_ERROR", status: 0 }`.
+- **Absolute paths on a configured scope** resolve as `{ errorCode: "INVALID_URL", status: 0 }`.
+- **Mixed modes** resolve as `{ errorCode: "MODE_CONFLICT", status: 0 }`.
 
-Nothing throws: the contract always comes back calm and predictable.
+Requests never throw: the contract always comes back calm and predictable.
+Mode misuse on the config surface (`venus.config`, `venus.reset`,
+`createClient`) does throw a descriptive `Error`.
+
+---
+
+### Scope-wide interceptors
+
+`hooks` and `onTelemetry` also go in `venus.config` and `createClient`. They
+run **before** the per-request ones on every attempt, so the token is read
+fresh even on retries:
+
+```ts
+const api = createClient({
+  baseURL: "https://api.example.com",
+  hooks: {
+    beforeRequest: () => ({
+      headers: { Authorization: `Bearer ${session.token}` },
+    }),
+  },
+  onTelemetry: (event) => analytics.track("http", event),
+});
+```
 
 ---
 
@@ -299,11 +445,22 @@ Arrays, nested objects, `Date` and `null`/`undefined` handling are built in.
    | `venusConfig.getGlobalHeaders()`   | `venus.config().headers`          |
    | `venusConfig.reset()`              | `venus.reset()`                   |
 
-3. **New optional `createInstance()`**: adopt multi-mode only if you need
-   isolated clients; singleton mode behaves like v2 by default.
-4. **Unified `progress` callback**: `useXHR`, `onUploadProgress` and
+3. **New optional `createClient()`**: adopt multi-mode only if you need
+   isolated clients; singleton mode behaves like v2 by default. Instances are
+   immutable (`config()` is a read-only getter) and modes are **exclusive**:
+   creating an instance disables `venus` and standalone methods.
+4. **Closed scopes**: once a `baseURL` is configured, methods only accept
+   relative paths (`get("https://…")` returns `INVALID_URL`). Put the API URL
+   in `baseURL` and use `get("/users")`. Without configuration, absolute URLs
+   still work.
+5. **Drop inherited headers per request**: use
+   `disableHeaders: ["authorization"]` instead of deleting them manually.
+6. **Unified `progress` callback**: `useXHR`, `onUploadProgress` and
    `onDownloadProgress` were replaced by a single `progress` option; the
    engine and the transfer direction are detected automatically.
+7. **Hooks merge by return value**: `beforeRequest` should return
+   `{ headers: { ... } }`; the result is merged and headers are combined.
+   Mutating the received `options` has no effect.
 
 ```diff
 - import { venusConfig, getRss } from "@braydev/venus";

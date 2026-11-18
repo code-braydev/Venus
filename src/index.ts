@@ -8,8 +8,8 @@
 export * from "./core/types.js";
 export { venus } from "./utils/config.js";
 
-// Export instance mode (multi-clients)
-export { createInstance } from "./methods/instance.js";
+// Export client mode (multi-clients)
+export { createClient } from "./methods/instance.js";
 
 // Export primary network methods
 export { get } from "./methods/get.js";

@@ -48,7 +48,7 @@ describe("Venus Core & Configuration", () => {
     expect(headers.get("authorization")).toBe("Bearer token-override");
   });
 
-  it("should skip headers and abort plumbing when nothing is configured", async () => {
+  it("should skip headers when nothing is configured", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ ok: true }), {
         status: 200,
@@ -56,11 +56,10 @@ describe("Venus Core & Configuration", () => {
       }),
     );
 
-    await get("https://api.example.com/plain");
+    await get("/plain");
 
     const init = fetchSpy.mock.calls[0][1] as RequestInit;
     expect(init.headers).toBeUndefined();
-    expect(init.signal).toBeUndefined();
   });
 
   it("should serialize query params correctly with various array formats and nested objects", async () => {
@@ -73,7 +72,7 @@ describe("Venus Core & Configuration", () => {
 
     const date = new Date("2026-04-18T12:00:00.000Z");
 
-    await get("https://api.example.com/search", {
+    await get("/search", {
       params: {
         query: "venus",
         page: 2,
@@ -104,7 +103,7 @@ describe("Venus Core & Configuration", () => {
       }),
     );
 
-    await get("https://api.example.com/search", {
+    await get("/search", {
       params: { ids: [1, 2, 3] },
       paramsArrayFormat: "comma",
     });
@@ -125,7 +124,7 @@ describe("Venus Core & Configuration", () => {
     let beforeCalled = false;
     let afterCalled = false;
 
-    const result = await get("https://api.example.com/hook", {
+    const result = await get("/hook", {
       hooks: {
         beforeRequest: ({ url, options }) => {
           beforeCalled = true;

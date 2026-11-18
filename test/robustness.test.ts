@@ -1,7 +1,11 @@
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { get, send, update, updateOnly, remove, venus } from "../src/index";
 
 describe("Venus Ultimate Robustness & Edge Case Test Suite", () => {
+  beforeEach(() => {
+    venus.config({ baseURL: "https://api.example.com" });
+  });
+
   afterEach(() => {
     venus.reset();
     vi.restoreAllMocks();
@@ -16,7 +20,7 @@ describe("Venus Ultimate Robustness & Edge Case Test Suite", () => {
         }),
       );
 
-      await get("https://api.example.com/endpoint", {
+      await get("/endpoint", {
         params: {
           categories: ["news", "tech"],
           nullVal: null,
@@ -40,7 +44,7 @@ describe("Venus Ultimate Robustness & Edge Case Test Suite", () => {
         }),
       );
 
-      await get("https://api.example.com/endpoint", {
+      await get("/endpoint", {
         params: {
           items: ["a", "b"],
         },
@@ -60,7 +64,7 @@ describe("Venus Ultimate Robustness & Edge Case Test Suite", () => {
         }),
       );
 
-      await get("https://api.example.com/path?existing=1", {
+      await get("/path?existing=1", {
         params: { added: 2 },
       });
 
@@ -79,7 +83,7 @@ describe("Venus Ultimate Robustness & Edge Case Test Suite", () => {
         }),
       );
 
-      const res = await get<Blob>("https://api.example.com/blob", { responseType: "blob" });
+      const res = await get<Blob>("/blob", { responseType: "blob" });
       expect(res.ok).toBe(true);
       expect(res.data).toBeInstanceOf(Blob);
       const text = await res.data!.text();
@@ -95,7 +99,7 @@ describe("Venus Ultimate Robustness & Edge Case Test Suite", () => {
         }),
       );
 
-      const res = await get<ArrayBuffer>("https://api.example.com/buffer", { responseType: "arrayBuffer" });
+      const res = await get<ArrayBuffer>("/buffer", { responseType: "arrayBuffer" });
       expect(res.ok).toBe(true);
       expect(res.data).toBeInstanceOf(ArrayBuffer);
       expect(res.data?.byteLength).toBe(3);
@@ -110,7 +114,7 @@ describe("Venus Ultimate Robustness & Edge Case Test Suite", () => {
         }),
       );
 
-      const res = await get<FormData>("https://api.example.com/form", { responseType: "formData" });
+      const res = await get<FormData>("/form", { responseType: "formData" });
       expect(res.ok).toBe(true);
       expect(res.data).toBeInstanceOf(FormData);
       expect(res.data?.get("key")).toBe("value");
@@ -124,7 +128,7 @@ describe("Venus Ultimate Robustness & Edge Case Test Suite", () => {
         }),
       );
 
-      const res = await get("https://api.example.com/malformed", { responseType: "json" });
+      const res = await get("/malformed", { responseType: "json" });
       expect(res.ok).toBe(false);
       expect(res.errorCode).toBe("JSON_PARSE_ERROR");
       expect(res.error).toContain("invalid JSON body");
@@ -137,7 +141,7 @@ describe("Venus Ultimate Robustness & Edge Case Test Suite", () => {
         }),
       );
 
-      const res = await get("https://api.example.com/reset");
+      const res = await get("/reset");
       expect(res.ok).toBe(true);
       expect(res.status).toBe(205);
       expect(res.data).toBeNull();
@@ -156,7 +160,7 @@ describe("Venus Ultimate Robustness & Edge Case Test Suite", () => {
         return new Response("ok", { status: 200 });
       });
 
-      const res = await get("https://api.example.com/aborted", {
+      const res = await get("/aborted", {
         signal: controller.signal,
       });
 
@@ -171,7 +175,7 @@ describe("Venus Ultimate Robustness & Edge Case Test Suite", () => {
         new Response("Too Many Requests", { status: 429 }),
       );
 
-      const res = await get("https://api.example.com/rate-limited", {
+      const res = await get("/rate-limited", {
         retry: {
           attempts: 2,
           backoffMs: 2,
@@ -195,7 +199,7 @@ describe("Venus Ultimate Robustness & Edge Case Test Suite", () => {
         }),
       );
 
-      const res = await get("https://api.example.com/hook-async", {
+      const res = await get("/hook-async", {
         hooks: {
           beforeRequest: async ({ options }) => {
             await new Promise((r) => setTimeout(r, 5));
@@ -222,7 +226,7 @@ describe("Venus Ultimate Robustness & Edge Case Test Suite", () => {
         );
 
       const events: any[] = [];
-      await get("https://api.example.com/telemetry-retry", {
+      await get("/telemetry-retry", {
         retry: { attempts: 1, backoffMs: 2 },
         onTelemetry: (ev) => events.push(ev),
       });
@@ -246,7 +250,7 @@ describe("Venus Ultimate Robustness & Edge Case Test Suite", () => {
         }),
       );
 
-      const res = await update("https://api.example.com/resource/1", { name: "Venus v2" });
+      const res = await update("/resource/1", { name: "Venus v2" });
       expect(res.ok).toBe(true);
       const init = fetchSpy.mock.calls[0][1] as RequestInit;
       expect(init.method).toBe("PUT");
@@ -261,10 +265,90 @@ describe("Venus Ultimate Robustness & Edge Case Test Suite", () => {
         }),
       );
 
-      const res = await updateOnly("https://api.example.com/resource/1", { name: "Patch" });
+      const res = await updateOnly("/resource/1", { name: "Patch" });
       expect(res.ok).toBe(true);
       const init = fetchSpy.mock.calls[0][1] as RequestInit;
       expect(init.method).toBe("PATCH");
     });
+  });
+});
+
+describe("Observers and hooks never break the contract", () => {
+  const ok = () =>
+    new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns UNKNOWN_ERROR when beforeRequest throws, without calling fetch", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => ok());
+    const res = await get("/x", {
+      hooks: {
+        beforeRequest: () => {
+          throw new Error("boom");
+        },
+      },
+    });
+    expect(res.ok).toBe(false);
+    expect(res.errorCode).toBe("UNKNOWN_ERROR");
+    expect(res.error).toContain("beforeRequest hook failed. boom");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns UNKNOWN_ERROR when afterResponse throws, without retrying", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => ok());
+    const res = await get("/x", {
+      retry: 2,
+      hooks: {
+        afterResponse: async () => {
+          throw new Error("late");
+        },
+      },
+    });
+    expect(res.errorCode).toBe("UNKNOWN_ERROR");
+    expect(res.error).toContain("afterResponse hook failed. late");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores errors thrown by onTelemetry and shouldRetry", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => ok());
+    const res = await get("/x", {
+      onTelemetry: () => {
+        throw new Error("telemetry");
+      },
+    });
+    expect(res.ok).toBe(true);
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () => new Response("{}", { status: 503, headers: { "content-type": "application/json" } }),
+    );
+    const failed = await get("/x", {
+      retry: {
+        attempts: 2,
+        backoffMs: 1,
+        shouldRetry: () => {
+          throw new Error("nope");
+        },
+      },
+    });
+    expect(failed.ok).toBe(false);
+  });
+
+  it("leaves no controller behind after a hook failure", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => ok());
+    await get("/x", {
+      hooks: {
+        beforeRequest: () => {
+          throw new Error("boom");
+        },
+      },
+    });
+    const abortSpy = vi.spyOn(AbortController.prototype, "abort");
+    venus.abort();
+    expect(abortSpy).not.toHaveBeenCalled();
   });
 });

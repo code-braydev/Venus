@@ -120,6 +120,7 @@ describe("Venus Hybrid Engine (XHR)", () => {
     MockXMLHttpRequest.reset();
     (globalThis as Record<string, unknown>).XMLHttpRequest =
       MockXMLHttpRequest;
+    venus.config({ baseURL: "https://api.example.com" });
   });
 
   afterEach(() => {
@@ -136,7 +137,7 @@ describe("Venus Hybrid Engine (XHR)", () => {
       }),
     );
 
-    const res = await get<{ via: string }>("https://api.example.com/fetch");
+    const res = await get<{ via: string }>("/fetch");
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(res.data).toEqual({ via: "fetch" });
@@ -145,7 +146,7 @@ describe("Venus Hybrid Engine (XHR)", () => {
 
   it("should switch to XHR transparently when progress is provided", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
-    const res = await get<{ via: string }>("https://api.example.com/xhr", {
+    const res = await get<{ via: string }>("/xhr", {
       progress: () => {},
     });
 
@@ -165,7 +166,7 @@ describe("Venus Hybrid Engine (XHR)", () => {
     const events: VenusProgress[] = [];
 
     const res = await send(
-      "https://api.example.com/upload",
+      "/upload",
       { file: "data" },
       { progress: (progress) => events.push(progress) },
     );
@@ -183,7 +184,7 @@ describe("Venus Hybrid Engine (XHR)", () => {
   it("should report download direction on requests without a body", async () => {
     const events: VenusProgress[] = [];
 
-    const res = await get("https://api.example.com/down", {
+    const res = await get("/down", {
       progress: (progress) => events.push(progress),
     });
 
@@ -200,7 +201,7 @@ describe("Venus Hybrid Engine (XHR)", () => {
       body: JSON.stringify({ message: "missing" }),
     };
 
-    const res = await get("https://api.example.com/missing", {
+    const res = await get("/missing", {
       progress: () => {},
     });
 
@@ -214,7 +215,7 @@ describe("Venus Hybrid Engine (XHR)", () => {
   it("should map network failures to NETWORK_ERROR", async () => {
     MockXMLHttpRequest.behavior = { fail: true };
 
-    const res = await get("https://api.example.com/down", {
+    const res = await get("/down", {
       progress: () => {},
     });
 
@@ -228,7 +229,7 @@ describe("Venus Hybrid Engine (XHR)", () => {
     MockXMLHttpRequest.behavior = { hang: true };
     const controller = new AbortController();
 
-    const pending = get("https://api.example.com/aborted", {
+    const pending = get("/aborted", {
       progress: () => {},
       signal: controller.signal,
     });
@@ -247,7 +248,7 @@ describe("Venus Hybrid Engine (XHR)", () => {
   it("should enforce the timeout on the XHR engine", async () => {
     MockXMLHttpRequest.behavior = { hang: true };
 
-    const res = await get("https://api.example.com/slow", {
+    const res = await get("/slow", {
       progress: () => {},
       timeout: 20,
     });
@@ -263,7 +264,7 @@ describe("Venus Hybrid Engine (XHR)", () => {
       rawHeaders: "content-type: application/octet-stream\r\n",
     };
 
-    const res = await get<Blob>("https://api.example.com/blob", {
+    const res = await get<Blob>("/blob", {
       progress: () => {},
       responseType: "blob",
     });
@@ -279,7 +280,7 @@ describe("Venus Hybrid Engine (XHR)", () => {
       rawHeaders: "content-type: application/xml\r\n",
     };
 
-    const res = await get<string>("https://api.example.com/page.html", {
+    const res = await get<string>("/page.html", {
       progress: () => {},
       responseType: "text",
     });
@@ -291,7 +292,7 @@ describe("Venus Hybrid Engine (XHR)", () => {
   it("should send request headers through XHR", async () => {
     MockXMLHttpRequest.behavior = {};
 
-    const res = await get("https://api.example.com/ok", {
+    const res = await get("/ok", {
       progress: () => {},
       headers: { "X-Engine": "xhr" },
     });
